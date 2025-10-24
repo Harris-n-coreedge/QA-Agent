@@ -1,0 +1,144 @@
+# QA Agent Configuration File
+
+# AI Configuration
+ai:
+  provider: "google"  # openai, anthropic, google, none
+  model: "gemini-2.5-flash"
+  thinking_budget: 0
+  max_tokens: 500
+  temperature: 0.1
+
+# Browser Configuration
+browser:
+  headless: false
+  slow_mo: 1000
+  viewport:
+    width: 1920
+    height: 1080
+  args:
+    - "--start-maximized"
+    - "--disable-web-security"
+    - "--disable-features=VizDisplayCompositor"
+    - "--no-sandbox"
+    - "--disable-dev-shm-usage"
+
+# Database Configuration
+database:
+  path: "qa_agent.db"
+  backup_interval: 24  # hours
+
+# Email Configuration
+email:
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+  username: ""  # Set via environment variable
+  password: ""  # Set via environment variable
+  from_email: ""  # Set via environment variable
+  to_emails: []  # Set via environment variable
+
+# Test Configuration
+testing:
+  default_timeout: 30000  # milliseconds
+  navigation_timeout: 45000  # milliseconds
+  retry_attempts: 3
+  screenshot_on_failure: true
+  video_recording: false
+
+# Cross-Browser Testing
+cross_browser:
+  browsers:
+    - chromium
+    - firefox
+    - webkit
+  parallel_execution: false
+
+# Mobile Testing
+mobile:
+  devices:
+    iPhone_12:
+      width: 390
+      height: 844
+      device_scale_factor: 3
+    iPhone_SE:
+      width: 375
+      height: 667
+      device_scale_factor: 2
+    Samsung_Galaxy_S21:
+      width: 384
+      height: 854
+      device_scale_factor: 3
+    iPad:
+      width: 768
+      height: 1024
+      device_scale_factor: 2
+
+# Load Testing
+load_testing:
+  default_concurrent_users: 10
+  default_duration: 60  # seconds
+  max_concurrent_users: 100
+
+# Security Testing
+security:
+  xss_payloads:
+    - "<script>alert('XSS')</script>"
+    - "javascript:alert('XSS')"
+    - "<img src=x onerror=alert('XSS')>"
+    - "';alert('XSS');//"
+  security_headers:
+    - "content-security-policy"
+    - "x-frame-options"
+    - "x-content-type-options"
+    - "strict-transport-security"
+    - "referrer-policy"
+
+# Performance Testing
+performance:
+  thresholds:
+    load_time: 3000  # milliseconds
+    first_contentful_paint: 1500  # milliseconds
+    network_requests: 100
+  metrics:
+    - "load_time"
+    - "first_contentful_paint"
+    - "largest_contentful_paint"
+    - "cumulative_layout_shift"
+    - "first_input_delay"
+    - "network_requests"
+    - "memory_usage"
+
+# Accessibility Testing
+accessibility:
+  wcag_level: "AA"
+  guidelines:
+    - "1.1.1"  # Non-text Content
+    - "1.3.1"  # Info and Relationships
+    - "1.4.3"  # Contrast (Minimum)
+    - "2.1.1"  # Keyboard
+    - "2.4.1"  # Bypass Blocks
+    - "4.1.2"  # Name, Role, Value
+
+# Reporting
+reporting:
+  formats:
+    - "html"
+    - "json"
+    - "pdf"
+  include_screenshots: true
+  include_videos: false
+  include_performance_metrics: true
+  include_accessibility_results: true
+
+# Scheduling
+scheduling:
+  timezone: "UTC"
+  default_schedule: "09:00"
+  max_concurrent_jobs: 5
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "qa_agent.log"
+  max_size: "10MB"
+  backup_count: 5
