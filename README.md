@@ -75,7 +75,7 @@ A comprehensive quality assurance automation platform that combines AI-powered t
 
 1. **Start the backend server**
    ```bash
-   python main.py
+   python standalone_backend.py
    ```
 
 2. **Start the frontend dashboard**
@@ -87,23 +87,6 @@ A comprehensive quality assurance automation platform that combines AI-powered t
 3. **Access the dashboard**
    - Open your browser and navigate to `http://localhost:5173`
    - The backend API will be available at `http://localhost:8000`
-
-### Running Tests
-
-1. **Browser Automation Tests**
-   ```bash
-   python broswer_use.py
-   ```
-
-2. **Multi-AI QA Agent**
-   ```bash
-   python multi_ai_qa_agent.py
-   ```
-
-3. **Simple Demo**
-   ```bash
-   python simple_demo.py
-   ```
 
 ## ⚙️ Configuration
 
@@ -122,14 +105,6 @@ To use AI features, you need to configure API keys:
 1. **Google Gemini API** (Recommended)
    - Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
    - Set the environment variable: `export GOOGLE_API_KEY="your-api-key"`
-
-2. **OpenAI API** (Alternative)
-   - Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
-   - Set the environment variable: `export OPENAI_API_KEY="your-api-key"`
-
-3. **Anthropic API** (Alternative)
-   - Get your API key from [Anthropic Console](https://console.anthropic.com/)
-   - Set the environment variable: `export ANTHROPIC_API_KEY="your-api-key"`
 
 ## 📱 Mobile Testing
 
@@ -164,9 +139,7 @@ The QA Agent generates comprehensive reports including:
 ### Common Issues
 
 1. **API Key Missing Error**
-   ```
-   ERROR: Missing key inputs argument! To use the Google AI API, provide (`api_key`) arguments.
-   ```
+
    **Solution**: Set up your API key as described in the API Key Setup section above.
 
 2. **Browser Launch Issues**
@@ -189,3 +162,4 @@ The QA Agent generates comprehensive reports including:
 
 
 **Developed by** | **Core Edge Solutions**
+
