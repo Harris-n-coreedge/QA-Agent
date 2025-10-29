@@ -1,0 +1,20 @@
+# Backend-only requirements for QA Agent Frontend
+# Install with: pip install -r requirements-backend.txt
+
+# Core FastAPI and server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+pydantic>=2.0.0
+
+# Already installed (from main requirements.txt)
+# playwright>=1.40.0
+# python-dotenv>=1.0.0
+# openai>=1.0.0
+# anthropic>=0.7.0
+# google-genai>=1.38.0
+# requests>=2.31.0
+# pyyaml>=6.0.1
+
+# Optional: Browser automation library
+# browser-use>=0.1.0

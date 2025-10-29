@@ -1,0 +1,16 @@
+{
+  "users": [
+    {
+      "email": "test1@example.com",
+      "password": "TestPass123!"
+    },
+    {
+      "email": "test2@example.com",
+      "password": "TestPass456!"
+    }
+  ],
+  "test_urls": [
+    "https://example.com",
+    "https://httpbin.org"
+  ]
+}

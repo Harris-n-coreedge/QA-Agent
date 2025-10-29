@@ -1,0 +1,20 @@
+"""
+Requirements for Browser Demo
+
+Install these packages to run the browser demo:
+"""
+# Core requirements
+playwright>=1.40.0
+pydantic>=2.0.0
+sqlmodel>=0.0.14
+fastapi>=0.100.0
+uvicorn>=0.23.0
+
+# Additional demo requirements
+asyncio
+uuid
+time
+typing
+json
+re
+enum

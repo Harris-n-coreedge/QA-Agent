@@ -1,0 +1,15 @@
+{
+  "endpoints": [
+    {
+      "method": "GET",
+      "url": "https://httpbin.org/get"
+    },
+    {
+      "method": "POST",
+      "url": "https://httpbin.org/post",
+      "data": {
+        "test": "data"
+      }
+    }
+  ]
+}
