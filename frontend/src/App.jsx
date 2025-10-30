@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import Sessions from './pages/Sessions'
 import BrowserUse from './pages/BrowserUse'
 import TestResults from './pages/TestResults'
+import QuickTest from './pages/QuickTest'
 
 function Navigation() {
   const location = useLocation()
@@ -14,6 +15,7 @@ function Navigation() {
     { path: '/sessions', icon: TestTube, label: 'Sessions' },
     { path: '/browser-use', icon: Zap, label: 'Browser Use' },
     { path: '/results', icon: BarChart3, label: 'Test Results' },
+    { path: '/quick-test', icon: Activity, label: 'Quick Test' },
   ]
 
   return (
@@ -89,6 +91,7 @@ function App() {
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/browser-use" element={<BrowserUse />} />
             <Route path="/results" element={<TestResults />} />
+            <Route path="/quick-test" element={<QuickTest />} />
           </Routes>
         </main>
       </div>

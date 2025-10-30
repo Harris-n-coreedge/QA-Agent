@@ -4,6 +4,8 @@ import { BarChart3, Loader, CheckCircle, XCircle, Clock, Filter } from 'lucide-r
 import { testResultsAPI, sessionsAPI } from '../api/client'
 
 function TestResultCard({ result }) {
+  const [lightbox, setLightbox] = useState({ open: false, src: '' })
+  
   const statusIcons = {
     completed: <CheckCircle className="w-5 h-5 text-green-500" />,
     failed: <XCircle className="w-5 h-5 text-red-500" />,
@@ -18,6 +20,9 @@ function TestResultCard({ result }) {
     pending: 'badge-warning',
   }
 
+  const screenshots = result.screenshots || []
+  const device = result.device
+
   return (
     <div className="card fade-in hover-lift hover-glow">
       <div className="flex items-start space-x-6">
@@ -31,6 +36,13 @@ function TestResultCard({ result }) {
               {result.status}
             </span>
           </div>
+
+          {device && (
+            <div className="bg-gradient-to-br from-purple-500/15 to-pink-500/10 p-6 rounded-2xl mb-6 border border-purple-500/30 shadow-xl">
+              <p className="text-purple-300 text-sm mb-2 font-bold tracking-wide uppercase">Device</p>
+              <p className="text-purple-200 font-bold text-lg">{device.name} ({device.width}×{device.height}) @ {device.deviceScaleFactor}x</p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-sm mb-8">
             <div className="bg-gradient-to-br from-white/10 to-white/5 p-6 rounded-2xl border border-white/15 shadow-xl">
@@ -62,6 +74,23 @@ function TestResultCard({ result }) {
             </div>
           )}
 
+          {screenshots.length > 0 && (
+            <div className="bg-gradient-to-br from-white/10 to-white/5 p-8 rounded-3xl border border-white/15 shadow-xl mt-6">
+              <h4 className="text-lg font-bold text-emerald-300 mb-4">Screenshots ({screenshots.length}):</h4>
+              <div className="flex flex-row flex-wrap gap-4">
+                {screenshots.map((src, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setLightbox({ open: true, src: `${src}?t=${Date.now()}` })}
+                    className="bg-black/40 border border-white/10 rounded-xl overflow-hidden transform transition-transform hover:scale-[1.03] hover:shadow-lg hover:shadow-black/30"
+                  >
+                    <img src={`${src}?t=${Date.now()}`} alt={`screenshot-${idx + 1}`} className="h-96 object-contain" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {result.error && (
             <div className="bg-gradient-to-r from-red-500/25 to-red-500/15 text-red-100 p-8 rounded-3xl mt-6 border border-red-500/40 shadow-2xl">
               <h4 className="text-lg font-bold mb-4 text-red-300">Error:</h4>
@@ -70,6 +99,15 @@ function TestResultCard({ result }) {
           )}
         </div>
       </div>
+
+      {lightbox.open && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6"
+          onClick={() => setLightbox({ open: false, src: '' })}
+        >
+          <img src={lightbox.src} alt="preview" className="max-h-[90vh] max-w-[90vw] object-contain" />
+        </div>
+      )}
     </div>
   )
 }

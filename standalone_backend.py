@@ -2,7 +2,8 @@
 Standalone QA Agent Backend - Works independently of existing qa_agent package
 This provides the full functionality for the frontend without dependencies on other routes
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
@@ -22,6 +23,15 @@ app = FastAPI(
     description="Backend service for multi-AI QA automation",
     version="1.0.0",
 )
+# Ensure screenshots directory exists and mount static serving
+SCREENSHOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mobile_test_screenshots")
+try:
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+except Exception:
+    pass
+
+app.mount("/static/mobile", StaticFiles(directory=SCREENSHOTS_DIR), name="mobile_screenshots")
+
 
 # Add CORS middleware
 app.add_middleware(
@@ -91,6 +101,21 @@ class CommandResponse(BaseModel):
     status: TestStatus
     executed_at: str
     duration_ms: Optional[float] = None
+class MobileTestRequest(BaseModel):
+    """Request to run a mobile responsiveness test"""
+    deviceName: Optional[str] = Field(default="iPhone 17 Pro Max", description="Device name to emulate")
+    custom: Optional[Dict[str, Any]] = Field(default=None, description="Custom dimensions { width, height, deviceScaleFactor? }")
+    overlapPercent: Optional[float] = Field(default=0.12, description="Fractional overlap between successive screenshots (e.g., 0.1 for 10%)")
+
+class MobileTestResponse(BaseModel):
+    """Response for mobile test run"""
+    session_id: str
+    device_name: str
+    device: Dict[str, Any]
+    screenshots: list
+    served_base_url: str
+    message: str
+
 
 
 class TestResultResponse(BaseModel):
@@ -324,6 +349,15 @@ async def close_session(session_id: str):
         # Remove from active sessions
         del active_sessions[session_id]
 
+        # Cleanup temporary screenshots for this session
+        try:
+            import shutil
+            session_dir = os.path.join(SCREENSHOTS_DIR, session_id)
+            if os.path.isdir(session_dir):
+                shutil.rmtree(session_dir, ignore_errors=True)
+        except Exception:
+            pass
+
         return {
             "message": f"Session {session_id} closed successfully",
             "session_id": session_id
@@ -331,6 +365,156 @@ async def close_session(session_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to close session: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/sessions/{session_id}/mobile-test", response_model=MobileTestResponse)
+async def run_mobile_test(session_id: str, request: MobileTestRequest, http_request: Request):
+    """Run a non-interactive mobile test and return screenshot URLs."""
+    if session_id not in active_sessions:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    session = active_sessions[session_id]
+    if session["status"] != "active":
+        raise HTTPException(status_code=400, detail=f"Session is not active. Current status: {session['status']}")
+
+    try:
+        from datetime import datetime
+        import uuid
+        started_at = datetime.utcnow()
+        agent = session["agent"]
+        page = getattr(agent, "current_page", None)
+        if page is None:
+            raise HTTPException(status_code=400, detail="No active page in session. Wait for initialization to complete.")
+
+        # Resolve device config from agent's MobileDeviceManager or custom
+        device_name = request.deviceName or "iPhone 17 Pro Max"
+        device_cfg: Dict[str, Any]
+        if request.custom and isinstance(request.custom, dict):
+            # Validate custom dimensions
+            width = int(request.custom.get("width", 0))
+            height = int(request.custom.get("height", 0))
+            scale = int(request.custom.get("deviceScaleFactor", 1) or 1)
+            if width <= 0 or height <= 0:
+                raise HTTPException(status_code=400, detail="Custom width and height must be positive integers")
+            device_cfg = {"width": width, "height": height, "deviceScaleFactor": scale}
+            device_name = request.custom.get("name") or f"Custom {width}x{height}"
+        else:
+            devices = getattr(agent.mobile_device_manager, "devices", {})
+            device_cfg = devices.get(device_name)
+            if not device_cfg:
+                raise HTTPException(status_code=400, detail=f"Unknown device: {device_name}")
+
+        # Store original viewport
+        original_viewport = page.viewport_size
+
+        # Set viewport to device
+        await page.set_viewport_size({
+            "width": device_cfg["width"],
+            "height": device_cfg["height"],
+        })
+
+        # Allow layout to stabilize
+        await page.wait_for_timeout(500)
+
+        # Measure page height and scroll, capturing screenshots
+        try:
+            page_height = await page.evaluate("document.body.scrollHeight")
+        except Exception:
+            page_height = device_cfg["height"]
+
+        viewport_h = device_cfg["height"]
+        scroll_position = 0
+        count = 0
+        screenshot_urls = []
+
+        # Calculate overlap: default 12% (10-15% requested)
+        try:
+            overlap_fraction = float(request.overlapPercent if request.overlapPercent is not None else 0.12)
+        except Exception:
+            overlap_fraction = 0.12
+        # Clamp reasonable bounds [0, 0.3]
+        overlap_fraction = max(0.0, min(0.3, overlap_fraction))
+        step = max(1, int(viewport_h * (1.0 - overlap_fraction)))
+
+        # Namespace files in a per-session directory
+        session_dir = os.path.join(SCREENSHOTS_DIR, session_id)
+        try:
+            os.makedirs(session_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        while scroll_position < page_height and count < 40:
+            # Scroll and wait
+            await page.evaluate(f"window.scrollTo(0, {scroll_position})")
+            await page.wait_for_timeout(400)
+
+            count += 1
+            filename = f"{device_name.replace(' ', '_')}_{count}.png"
+            filepath = os.path.join(session_dir, filename)
+            try:
+                await page.screenshot(path=filepath)
+                rel = f"/static/mobile/{session_id}/{filename}"
+                base = str(http_request.base_url).rstrip('/')
+                screenshot_urls.append(f"{base}{rel}")
+            except Exception:
+                # Skip failures but continue
+                pass
+
+            scroll_position += step
+
+        # Scroll back to top and reset viewport
+        try:
+            await page.evaluate("window.scrollTo(0, 0)")
+        except Exception:
+            pass
+        try:
+            await page.set_viewport_size(original_viewport)
+        except Exception:
+            pass
+
+        # Persist test result for Test Results page
+        try:
+            test_id = str(uuid.uuid4())
+            completed_at = datetime.utcnow()
+            duration_ms = (completed_at - started_at).total_seconds() * 1000
+            test_results[test_id] = {
+                "test_id": test_id,
+                "session_id": session_id,
+                "command": "mobile test",
+                "status": TestStatus.completed,
+                "result": f"Captured {len(screenshot_urls)} screenshots on {device_name} ({device_cfg.get('width')}x{device_cfg.get('height')})",
+                "started_at": started_at.isoformat(),
+                "completed_at": completed_at.isoformat(),
+                "duration_ms": duration_ms,
+                "device": {
+                    "name": device_name,
+                    "width": device_cfg.get("width"),
+                    "height": device_cfg.get("height"),
+                    "deviceScaleFactor": device_cfg.get("deviceScaleFactor", 1),
+                },
+                "screenshots": screenshot_urls,
+            }
+        except Exception:
+            pass
+
+        return MobileTestResponse(
+            session_id=session_id,
+            device_name=device_name,
+            device={
+                "name": device_name,
+                "width": device_cfg.get("width"),
+                "height": device_cfg.get("height"),
+                "deviceScaleFactor": device_cfg.get("deviceScaleFactor", 1),
+            },
+            screenshots=screenshot_urls,
+            served_base_url=str(http_request.base_url).rstrip('/') + "/static/mobile/",
+            message=f"Captured {len(screenshot_urls)} screenshots"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Mobile test failed: {str(e)}")
 
 
 @app.post("/api/v1/qa-tests/browser-use/execute")

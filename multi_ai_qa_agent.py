@@ -300,18 +300,95 @@ class VisualTestingEngine:
         except Exception as e:
             return {"status": "error", "message": f"Screenshot comparison failed: {e}"}
     
-    async def analyze_ui_elements(self, page) -> dict:
-        """Extract UI elements using page analysis."""
+    async def analyze_ui_elements(self, page, scroll_and_count: bool = False) -> dict:
+        """Extract UI elements using page analysis with optional full-page scrolling."""
         try:
-            # Analyze page structure for UI elements
+            if not scroll_and_count:
+                # Quick analysis without scrolling (for initial page analysis)
+                elements = await page.evaluate("""
+                    () => {
+                        const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"], .btn, .button, [class*="btn"], [class*="button"], a[href="#"], a[onclick], div[onclick], span[onclick]'))
+                            .map(el => ({
+                                type: 'button',
+                                text: el.textContent?.trim() || el.value || el.innerText || '',
+                                visible: el.offsetParent !== null,
+                                position: { x: el.offsetLeft, y: el.offsetTop },
+                                tagName: el.tagName.toLowerCase(),
+                                className: el.className || '',
+                                role: el.getAttribute('role') || ''
+                            }));
+                        
+                        const inputs = Array.from(document.querySelectorAll('input, textarea, select'))
+                            .map(el => ({
+                                type: 'input',
+                                inputType: el.type || 'text',
+                                placeholder: el.placeholder || '',
+                                visible: el.offsetParent !== null,
+                                position: { x: el.offsetLeft, y: el.offsetTop }
+                            }));
+                        
+                        const links = Array.from(document.querySelectorAll('a'))
+                            .map(el => ({
+                                type: 'link',
+                                text: el.textContent?.trim() || '',
+                                href: el.href || '',
+                                visible: el.offsetParent !== null,
+                                position: { x: el.offsetLeft, y: el.offsetTop }
+                            }));
+                        
+                        return {
+                            buttons: buttons,
+                            inputs: inputs,
+                            links: links
+                        };
+                    }
+                """)
+                
+                return {
+                    "buttons": elements["buttons"],
+                    "inputs": elements["inputs"], 
+                    "links": elements["links"]
+                }
+            
+            # Full-page scrolling analysis (for auto-check command)
+            print("🔍 Starting full-page UI element scan with scrolling...")
+            
+            # Scroll to top first
+            await page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(0.5)
+            
+            # Get page dimensions
+            page_height = await page.evaluate("document.body.scrollHeight")
+            viewport_height = await page.evaluate("window.innerHeight")
+            
+            print(f"   📏 Page: {page_height}px | Viewport: {viewport_height}px")
+            
+            # Scroll through entire page and collect elements
+            scroll_position = 0
+            scroll_step = viewport_height // 3  # Scroll 1/3 viewport at a time for thorough scanning
+            
+            while scroll_position <= page_height:
+                # Scroll to position
+                await page.evaluate(f"window.scrollTo(0, {scroll_position})")
+                await asyncio.sleep(0.3)  # Wait for lazy-loaded content
+                scroll_position += scroll_step
+            
+            # Scroll back to top
+            await page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(0.3)
+            
+            # Now get all elements (after triggering lazy loading)
             elements = await page.evaluate("""
                 () => {
-                    const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'))
+                    const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"], .btn, .button, [class*="btn"], [class*="button"], a[href="#"], a[onclick], div[onclick], span[onclick]'))
                         .map(el => ({
                             type: 'button',
-                            text: el.textContent?.trim() || el.value || '',
+                            text: el.textContent?.trim() || el.value || el.innerText || '',
                             visible: el.offsetParent !== null,
-                            position: { x: el.offsetLeft, y: el.offsetTop }
+                            position: { x: el.offsetLeft, y: el.offsetTop },
+                            tagName: el.tagName.toLowerCase(),
+                            className: el.className || '',
+                            role: el.getAttribute('role') || ''
                         }));
                     
                     const inputs = Array.from(document.querySelectorAll('input, textarea, select'))
@@ -333,14 +410,21 @@ class VisualTestingEngine:
                         }));
                     
                     return {
-                        buttons: buttons.filter(el => el.visible),
-                        inputs: inputs.filter(el => el.visible),
-                        links: links.filter(el => el.visible)
+                        buttons: buttons,
+                        inputs: inputs,
+                        links: links
                     };
                 }
             """)
             
-            return elements
+            print(f"   ✅ Scan complete: {len(elements['buttons'])} buttons, {len(elements['inputs'])} inputs, {len(elements['links'])} links")
+            
+            return {
+                "buttons": elements["buttons"],
+                "inputs": elements["inputs"], 
+                "links": elements["links"]
+            }
+            
         except Exception as e:
             print(f"⚠️ UI element analysis failed: {e}")
             return {"buttons": [], "inputs": [], "links": []}
@@ -830,10 +914,13 @@ class MobileDeviceManager:
     
     def __init__(self):
         self.devices = {
-            'iPhone 12': {'width': 390, 'height': 844, 'deviceScaleFactor': 3},
-            'iPhone SE': {'width': 375, 'height': 667, 'deviceScaleFactor': 2},
-            'Samsung Galaxy S21': {'width': 384, 'height': 854, 'deviceScaleFactor': 3},
-            'iPad': {'width': 768, 'height': 1024, 'deviceScaleFactor': 2}
+            'iPhone 17 Pro Max': {'width': 430, 'height': 932, 'deviceScaleFactor': 3},
+            'iPhone 17 Pro': {'width': 428, 'height': 926, 'deviceScaleFactor': 3},
+            'iPhone 17': {'width': 414, 'height': 896, 'deviceScaleFactor': 2},
+            'Samsung Galaxy S25 Ultra': {'width': 420, 'height': 912, 'deviceScaleFactor': 3},
+            'iPad': {'width': 768, 'height': 1024, 'deviceScaleFactor': 2},
+            'iPad Pro': {'width': 1024, 'height': 1366, 'deviceScaleFactor': 2},
+            'Custom': {'width': 375, 'height': 667, 'deviceScaleFactor': 1}
         }
     
     async def test_on_device(self, page, device_name: str):
@@ -1449,8 +1536,10 @@ class MultiAIQAAgent:
         print("   - 'search for javascript and then click on the first result'")
         print("   - 'scroll down then click the menu'")
         print()
-        print("🧪 Auto Checks:")
+        print("🧪 Analysis Commands:")
         print("   - 'auto check' - Run baseline QA checks on this page")
+        print("   - 'analyze page' - Comprehensive page analysis")
+        print("   - 'mobile test' - Interactive mobile device testing")
         
         return True
     
@@ -1595,7 +1684,6 @@ CRITICAL RULE:
 - When the user says "pricing" or "plans", prioritize elements where type = "navigation".
 - Always use the 'text' field for reasoning and the 'locator' field for execution.
 - If the user command implies both typing and immediate submission (e.g., "type X in search and press enter"), use the 'action': 'search' instead of 'type'.
-- Cheak if the user command is valid and if not then return the error message "x invalid command where x is the command that the user entered"
 
 OUTPUT FORMAT:
 {{
@@ -2848,23 +2936,159 @@ OUTPUT FORMAT:
             return "❌ Unknown API command. Try: 'api test'"
     
     async def _handle_mobile_command(self, user_input: str) -> str:
-        """Handle mobile testing commands."""
-        command = user_input.lower().replace("mobile ", "").strip()
-        
-        if "test" in command:
-            # Test on mobile device
-            device_name = "iPhone 12"  # Default device
-            if "iphone" in command:
-                device_name = "iPhone 12"
-            elif "android" in command or "galaxy" in command:
-                device_name = "Samsung Galaxy S21"
-            elif "ipad" in command:
-                device_name = "iPad"
+        """Handle mobile testing commands with interactive device selection."""
+        try:
+            if not self.current_page:
+                return "❌ No active page. Please navigate to a page first."
             
-            result = await self.mobile_device_manager.test_on_device(self.current_page, device_name)
+            # Display available mobile devices (synced with MobileDeviceManager)
+            mobile_devices = {
+                "1": {"name": "iPhone 17 Pro Max", "width": 430, "height": 932, "deviceScaleFactor": 3},
+                "2": {"name": "iPhone 17 Pro", "width": 428, "height": 926, "deviceScaleFactor": 3},
+                "3": {"name": "iPhone 17", "width": 414, "height": 896, "deviceScaleFactor": 2},
+                "4": {"name": "Samsung Galaxy S25 Ultra", "width": 420, "height": 912, "deviceScaleFactor": 3},
+                "5": {"name": "iPad", "width": 768, "height": 1024, "deviceScaleFactor": 2},
+                "6": {"name": "iPad Pro", "width": 1024, "height": 1366, "deviceScaleFactor": 2},
+                "7": {"name": "Custom Size", "width": 375, "height": 667, "deviceScaleFactor": 1}
+            }
+            
+            print("\n📱 Available Mobile Devices:")
+            print("=" * 50)
+            for key, device in mobile_devices.items():
+                scale_info = f" @{device['deviceScaleFactor']}x" if device['deviceScaleFactor'] > 1 else ""
+                print(f"{key}. {device['name']} ({device['width']}x{device['height']}){scale_info}")
+            print("=" * 50)
+            
+            # Get user selection
+            while True:
+                try:
+                    selection = input("\n🔍 Select device number (1-7) or 'q' to quit: ").strip()
+                    
+                    if selection.lower() == 'q':
+                        return "❌ Mobile test cancelled"
+                    
+                    if selection in mobile_devices:
+                        selected_device = mobile_devices[selection]
+                        break
+                    else:
+                        print("❌ Invalid selection. Please choose 1-7 or 'q' to quit.")
+                        continue
+                        
+                except KeyboardInterrupt:
+                    return "❌ Mobile test cancelled"
+            
+            # Handle custom size
+            if selection == "7":
+                try:
+                    width = int(input("Enter custom width (e.g., 375): "))
+                    height = int(input("Enter custom height (e.g., 667): "))
+                    scale = int(input("Enter device scale factor (e.g., 2): ") or "1")
+                    selected_device = {
+                        "name": f"Custom ({width}x{height})", 
+                        "width": width, 
+                        "height": height,
+                        "deviceScaleFactor": scale
+                    }
+                except ValueError:
+                    return "❌ Invalid dimensions. Please enter numbers only."
+            
+            print(f"\n📱 Testing on {selected_device['name']}...")
+            
+            # Store original viewport size
+            original_viewport = self.current_page.viewport_size
+            
+            # Set mobile viewport
+            try:
+                await self.current_page.set_viewport_size({
+                    "width": selected_device["width"], 
+                    "height": selected_device["height"]
+                })
+                print("✅ Viewport set successfully")
+            except Exception as viewport_error:
+                print(f"❌ Viewport setting failed: {viewport_error}")
+                return f"❌ Mobile testing failed: {viewport_error}"
+            
+            # Wait for page to adjust
+            await asyncio.sleep(1)
+            
+            # Scroll through entire page and take screenshots
+            try:
+                page_height = await self.current_page.evaluate("document.body.scrollHeight")
+                viewport_height = selected_device["height"]
+                print(f"📏 Page height: {page_height}px | Viewport: {viewport_height}px")
+            except Exception as eval_error:
+                print(f"❌ Page evaluation failed: {eval_error}")
+                return f"❌ Mobile testing failed: {eval_error}"
+            
+            screenshots = []
+            scroll_position = 0
+            screenshot_count = 0
+            
+            while scroll_position < page_height:
+                screenshot_count += 1
+                
+                # Scroll to position
+                try:
+                    await self.current_page.evaluate(f"window.scrollTo(0, {scroll_position})")
+                    await asyncio.sleep(0.5)  # Wait for content to load
+                except Exception as scroll_error:
+                    print(f"❌ Scroll failed at position {scroll_position}: {scroll_error}")
+                    break
+                
+                # Take screenshot
+                try:
+                    device_name = selected_device['name']
+                    screenshot_path = f"screenshot_mobile_{device_name.replace(' ', '_').lower()}_{screenshot_count}.png"
+                    await self.current_page.screenshot(path=screenshot_path)
+                    screenshots.append(screenshot_path)
+                    print(f"📸 Screenshot {screenshot_count}: {screenshot_path}")
+                except Exception as screenshot_error:
+                    print(f"⚠️ Screenshot {screenshot_count} failed: {screenshot_error}")
+                    continue
+                
+                # Move to next section
+                scroll_position += viewport_height
+            
+            # Scroll back to top
+            try:
+                await self.current_page.evaluate("window.scrollTo(0, 0)")
+                await asyncio.sleep(0.5)
+            except Exception as scroll_back_error:
+                print(f"⚠️ Scroll back to top failed: {scroll_back_error}")
+            
+            # Reset to original viewport
+            try:
+                await self.current_page.set_viewport_size(original_viewport)
+                print("✅ Browser reset to original size")
+            except Exception as reset_error:
+                print(f"⚠️ Browser reset failed: {reset_error}")
+            
+            # Generate test report
+            result = f"📱 Mobile Test Complete - {selected_device['name']}\n"
+            result += f"   📏 Viewport: {selected_device['width']}x{selected_device['height']}\n"
+            result += f"   🔍 Scale Factor: {selected_device['deviceScaleFactor']}x\n"
+            result += f"   📸 Screenshots taken: {len(screenshots)}\n"
+            result += f"   📄 Page sections: {screenshot_count}\n"
+            result += f"   🔄 Browser reset to original size\n\n"
+            
+            result += "📸 Screenshots saved:\n"
+            for i, screenshot in enumerate(screenshots, 1):
+                result += f"   {i}. {screenshot}\n"
+            
             return result
-        else:
-            return "❌ Unknown mobile command. Try: 'mobile test'"
+            
+        except Exception as e:
+            # Ensure browser is reset even if error occurs
+            try:
+                if self.current_page:
+                    original_viewport = self.current_page.viewport_size
+                    await self.current_page.set_viewport_size(original_viewport)
+            except:
+                pass
+            print(f"❌ Mobile testing failed with error: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"❌ Mobile testing failed: {e}"
     
     async def _handle_schedule_command(self, user_input: str) -> str:
         """Handle test scheduling commands."""
@@ -3206,12 +3430,53 @@ OUTPUT FORMAT:
             except Exception as e:
                 report_lines.append(f"   ❌ Page load check failed: {e}")
 
-            # 2) Header & footer presence
+            # 2) Header & footer presence (detect visual headers/footers, not just semantic HTML)
             try:
-                header_count = await self.current_page.locator("header").count()
-                footer_count = await self.current_page.locator("footer").count()
-                report_lines.append(f"   ✅ Header present: {header_count>0} | Footer present: {footer_count>0}")
+                # Check for semantic HTML5 elements first
+                semantic_header = await self.current_page.locator("header").count()
+                semantic_footer = await self.current_page.locator("footer").count()
+                
+                # Check for common header patterns (navigation, logo, search)
+                header_patterns = [
+                    "nav", "[role='navigation']", ".header", ".navbar", ".nav-bar",
+                    ".main-nav", ".site-header", ".top-nav", ".navigation",
+                    "header", ".menu", ".top-menu", ".primary-nav"
+                ]
+                
+                # Check for common footer patterns (copyright, links, social)
+                footer_patterns = [
+                    ".footer", ".site-footer", ".page-footer", ".bottom",
+                    ".copyright", ".footer-nav", ".footer-links", ".social-links",
+                    "footer", ".legal", ".disclaimer"
+                ]
+                
+                # Count visual headers/footers
+                visual_header_count = 0
+                visual_footer_count = 0
+                
+                for pattern in header_patterns:
+                    count = await self.current_page.locator(pattern).count()
+                    if count > 0:
+                        visual_header_count += count
+                        break
+                
+                for pattern in footer_patterns:
+                    count = await self.current_page.locator(pattern).count()
+                    if count > 0:
+                        visual_footer_count += count
+                        break
+                
+                # Determine if headers/footers are present
+                has_header = semantic_header > 0 or visual_header_count > 0
+                has_footer = semantic_footer > 0 or visual_footer_count > 0
+                
+                report_lines.append(f"   ✅ Header present: {has_header} | Footer present: {has_footer}")
+                if semantic_header > 0 or semantic_footer > 0:
+                    report_lines.append("     ↳ Uses semantic HTML5 <header>/<footer> tags")
+                else:
+                    report_lines.append("     ↳ Uses CSS classes/divs for header/footer (common pattern)")
                 report_lines.append("     ↳ Ensures global navigation and site attribution are present")
+                
             except Exception as e:
                 report_lines.append(f"   ⚠️ Header/footer check failed: {e}")
 
@@ -3296,15 +3561,32 @@ OUTPUT FORMAT:
             except Exception as e:
                 report_lines.append(f"   ⚠️ Accessibility check failed: {e}")
 
-            # 8) Visual elements snapshot
+            # 8) Visual elements snapshot (with full-page scrolling)
             try:
-                ui = await self.visual_testing.analyze_ui_elements(self.current_page)
+                ui = await self.visual_testing.analyze_ui_elements(self.current_page, scroll_and_count=True)
                 btns = ui.get('buttons', [])
                 inputs = ui.get('inputs', [])
                 links = ui.get('links', [])
+                
+                # Count visible vs total elements
+                visible_btns = len([b for b in btns if b.get('visible', True)])
+                visible_inputs = len([i for i in inputs if i.get('visible', True)])
+                visible_links = len([l for l in links if l.get('visible', True)])
+                
                 report_lines.append(
-                    f"   🎨 UI elements | buttons: {len(btns)}, inputs: {len(inputs)}, links: {len(links)}"
+                    f"   🎨 UI elements | buttons: {len(btns)} ({visible_btns} visible), inputs: {len(inputs)} ({visible_inputs} visible), links: {len(links)} ({visible_links} visible)"
                 )
+                report_lines.append("     ↳ Scanned entire page by scrolling to detect lazy-loaded elements")
+                
+                # Show button breakdown by type
+                button_types = {}
+                for btn in btns:
+                    tag = btn.get('tagName', 'unknown')
+                    button_types[tag] = button_types.get(tag, 0) + 1
+                
+                type_breakdown = ', '.join([f"{count} {tag}" for tag, count in button_types.items()])
+                report_lines.append(f"     ↳ Button types: {type_breakdown}")
+                
                 # Show a few button labels as examples
                 samples = [b.get('text','').strip() for b in btns if b.get('text')][:3]
                 if samples:
@@ -3421,8 +3703,8 @@ OUTPUT FORMAT:
                             const n = (e.name||'').toLowerCase();
                             if (n.endsWith('.css')) tally.css++;
                             else if (n.endsWith('.js')) tally.js++;
-                            else if (n.match(/\\.(png|jpg|jpeg|gif|webp|svg)$/)) tally.img++;
-                            else if (n.match(/\\.(woff|woff2|ttf|otf)$/)) tally.font++;
+                            else if (n.match(/\.(png|jpg|jpeg|gif|webp|svg)$/)) tally.img++;
+                            else if (n.match(/\.(woff|woff2|ttf|otf)$/)) tally.font++;
                             else tally.other++;
                         }
                         return tally;
@@ -4306,7 +4588,7 @@ OUTPUT FORMAT:
 🎨 Visual Commands:
    - "visual screenshot" - Capture screenshot
    - "visual compare [name]" - Compare with baseline
-   - "visual elements" - Analyze UI elements
+   - "visual elements" - Analyze UI elements (// Now detects ALL button-like elements: 'button, input[type="button"], input[type="submit"], [role="button"], .btn, .button, [class*="btn"], [class*="button"], a[href="#"], a[onclick], div[onclick], span[onclick]')
 
 🌐 Cross-Browser Testing:
    - "cross-browser test" - Test across multiple browsers
@@ -4326,7 +4608,7 @@ OUTPUT FORMAT:
    - "schedule daily" - Schedule daily tests
 
 ⚡ Load Testing:
-   - "load test" - Run load tests
+   - "load test" - Run load tests (check Server response time - How fast the server responds, HTTP status codes - 200, 404, 500, etc, Basic connectivity - Can the server handle requests )
 
 📧 Notifications:
    - "notify send" - Send test report via email
@@ -4405,18 +4687,10 @@ OUTPUT FORMAT:
     
     async def close_session(self):
         """Close the browser session."""
-        try:
-            if self.browser:
-                await self.browser.close()
-        except Exception as e:
-            print(f"⚠️ Warning: Error closing browser: {e}")
-        
-        try:
-            if self.playwright:
-                await self.playwright.stop()
-        except Exception as e:
-            print(f"⚠️ Warning: Error stopping playwright: {e}")
-        
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
         print("🧹 Session closed!")
 
 
@@ -4460,7 +4734,7 @@ async def main():
     try:
         # Start session on provided URL (CLI arg or START_URL env), fallback to default
         start_url = sys.argv[1] if len(sys.argv) > 1 else os.getenv("START_URL", "https://www.youtube.com/")
-        await agent.start_session(start_url)
+        await agent.start_session(start_url, auto_check=False)
         
         print("💬 Enter your commands (type 'quit' to exit):")
         

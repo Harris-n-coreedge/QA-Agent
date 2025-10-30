@@ -34,6 +34,18 @@ export const sessionsAPI = {
     return response.data
   },
 
+  mobileTest: async (sessionId, opts = { deviceName: 'iPhone 17 Pro Max', custom: null }) => {
+    const payload = {}
+    if (opts?.custom) {
+      payload.custom = opts.custom
+      if (opts.custom.name) payload.deviceName = opts.custom.name
+    } else if (opts?.deviceName) {
+      payload.deviceName = opts.deviceName
+    }
+    const response = await apiClient.post(`/qa-tests/sessions/${sessionId}/mobile-test`, payload)
+    return response.data
+  },
+
   close: async (sessionId) => {
     const response = await apiClient.delete(`/qa-tests/sessions/${sessionId}`)
     return response.data
