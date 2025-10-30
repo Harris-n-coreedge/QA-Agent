@@ -16,6 +16,11 @@ export const sessionsAPI = {
     return response.data
   },
 
+  sessionDefault: async () => {
+    const response = await apiClient.get('/qa-tests/session-default')
+    return response.data
+  },
+
   list: async () => {
     const response = await apiClient.get('/qa-tests/sessions')
     return response.data

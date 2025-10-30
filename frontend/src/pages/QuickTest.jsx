@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { sessionsAPI } from '../api/client'
 
 const providers = [
@@ -11,7 +11,6 @@ export default function QuickTest() {
   const [websiteUrl, setWebsiteUrl] = useState('https://www.w3schools.com/')
   const [aiProvider, setAiProvider] = useState('google')
   const [session, setSession] = useState(null)
-  const [creating, setCreating] = useState(false)
   const [running, setRunning] = useState(false)
   const [resultText, setResultText] = useState('')
   const [mobileImages, setMobileImages] = useState([])
@@ -19,37 +18,24 @@ export default function QuickTest() {
   const [custom, setCustom] = useState({ width: '', height: '', deviceScaleFactor: '1', name: '' })
   const [lightbox, setLightbox] = useState({ open: false, src: '' })
 
-  const createSession = async () => {
-    setCreating(true)
-    setResultText('')
-    setMobileImages([])
-    try {
-      const res = await sessionsAPI.create({
-        website_url: websiteUrl,
-        ai_provider: aiProvider,
-        auto_check: false,
-      })
-      setSession(res)
-      // Wait until session becomes active to avoid early 404s
+  // Use globally shared default session; fetch once and refresh status periodically
+  useEffect(() => {
+    let alive = true
+    const fetchDefault = async () => {
       try {
-        const timeoutAt = Date.now() + 30000
-        let latest = res
-        while (Date.now() < timeoutAt) {
-          try {
-            const s = await sessionsAPI.get(res.session_id)
-            latest = s
-            if (s.status === 'active') break
-          } catch (_) {}
-          await new Promise(r => setTimeout(r, 700))
-        }
-        setSession(latest)
-      } catch (_) {}
-    } catch (e) {
-      setResultText(`Failed to create session: ${e?.response?.data?.detail || e.message}`)
-    } finally {
-      setCreating(false)
+        const res = await sessionsAPI.sessionDefault()
+        if (alive) setSession(res)
+      } catch (_) {
+        // ignore; dashboard will surface health
+      }
     }
-  }
+    fetchDefault()
+    const id = setInterval(fetchDefault, 5000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
 
   const runCommand = async (command) => {
     if (!session?.session_id) return
@@ -185,15 +171,12 @@ export default function QuickTest() {
             </select>
           </div>
         </div>
-        <button
-          onClick={createSession}
-          disabled={creating}
-          className="px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 disabled:opacity-50"
-        >
-          {creating ? 'Creating Session...' : 'Create Session'}
-        </button>
-        {session?.session_id && (
-          <div className="text-sm text-white/60">Session: {session.session_id} ({session.status})</div>
+        {session?.session_id ? (
+          <div className="text-sm text-white/70">
+            Using global session: <span className="font-mono">{session.session_id}</span> (<span>{session.status}</span>)
+          </div>
+        ) : (
+          <div className="text-sm text-white/60">Waiting for global session...</div>
         )}
       </div>
 

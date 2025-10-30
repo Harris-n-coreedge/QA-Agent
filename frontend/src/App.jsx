@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom'
 import { Activity, TestTube, Zap, BarChart3, Settings } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
-import Sessions from './pages/Sessions'
 import BrowserUse from './pages/BrowserUse'
 import TestResults from './pages/TestResults'
 import QuickTest from './pages/QuickTest'
@@ -12,7 +11,6 @@ function Navigation() {
 
   const navItems = [
     { path: '/', icon: Activity, label: 'Dashboard' },
-    { path: '/sessions', icon: TestTube, label: 'Sessions' },
     { path: '/browser-use', icon: Zap, label: 'Browser Use' },
     { path: '/results', icon: BarChart3, label: 'Test Results' },
     { path: '/quick-test', icon: Activity, label: 'Quick Test' },
@@ -88,7 +86,6 @@ function App() {
         <main className="container mx-auto px-8 py-16 relative z-10">
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/sessions" element={<Sessions />} />
             <Route path="/browser-use" element={<BrowserUse />} />
             <Route path="/results" element={<TestResults />} />
             <Route path="/quick-test" element={<QuickTest />} />

@@ -90,6 +90,13 @@ function Dashboard() {
     refetchInterval: 3000,
   })
 
+  const { data: defaultSession } = useQuery({
+    queryKey: ['default-session'],
+    queryFn: () => sessionsAPI.sessionDefault(),
+    retry: 0,
+    refetchInterval: 5000,
+  })
+
   const activeSessions = sessions?.sessions?.filter(s => s.status === 'active').length || 0
   const totalTests = testResults?.total || 0
   const completedTests = testResults?.results?.filter(r => r.status === 'completed').length || 0
@@ -104,6 +111,13 @@ function Dashboard() {
         <p className="text-white/80 text-2xl font-medium tracking-wide">
           Monitor your QA automation in real-time
         </p>
+        {defaultSession && (
+          <div className="mt-6 inline-flex items-center space-x-4 px-6 py-3 rounded-2xl border border-white/20 bg-white/10 text-white/90">
+            <span className="font-bold">Default Session:</span>
+            <span className="font-mono">{defaultSession.session_name}</span>
+            <span className="badge badge-info">{defaultSession.status}</span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">

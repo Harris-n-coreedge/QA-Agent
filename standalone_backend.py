@@ -45,6 +45,9 @@ app.add_middleware(
 # Store active agent sessions
 active_sessions: Dict[str, Any] = {}
 test_results: Dict[str, Dict] = {}
+# Default shared session tracking
+DEFAULT_SESSION_ID: Optional[str] = None
+DEFAULT_SESSION_NAME = "Default Session"
 
 
 class AIProvider(str, Enum):
@@ -101,6 +104,113 @@ class CommandResponse(BaseModel):
     status: TestStatus
     executed_at: str
     duration_ms: Optional[float] = None
+
+# Internal helpers for default session management
+async def _ensure_default_session() -> Optional[str]:
+    """Ensure the global default session exists; create if missing. Returns session_id or None on failure."""
+    global DEFAULT_SESSION_ID
+    try:
+        # If already present and not failed, keep it
+        if DEFAULT_SESSION_ID and DEFAULT_SESSION_ID in active_sessions:
+            status = active_sessions[DEFAULT_SESSION_ID].get("status")
+            if status in {"active", "initializing"}:
+                return DEFAULT_SESSION_ID
+
+        # Lazy import to reuse existing logic
+        from dotenv import load_dotenv
+        load_dotenv()
+        # Prefer provider from env; fallback to google from qa_config.yaml if any
+        preferred_provider = os.getenv("QA_AGENT_AI_PROVIDER")
+        if not preferred_provider:
+            try:
+                import yaml
+                cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qa_config.yaml")
+                if os.path.exists(cfg_path):
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        cfg = yaml.safe_load(f) or {}
+                        preferred_provider = (cfg.get("ai") or {}).get("provider")
+            except Exception:
+                preferred_provider = None
+        preferred_provider = (preferred_provider or AIProvider.google.value).lower()
+
+        # Map to enum safely
+        provider_enum = AIProvider(preferred_provider) if preferred_provider in {p.value for p in AIProvider} else AIProvider.google
+
+        # Read API key for chosen provider
+        if provider_enum == AIProvider.openai:
+            api_key = os.getenv("OPENAI_API_KEY")
+        elif provider_enum == AIProvider.anthropic:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+        else:
+            api_key = os.getenv("GOOGLE_API_KEY")
+
+        # If missing API key, register failed default session and return None
+        if not api_key:
+            DEFAULT_SESSION_ID = DEFAULT_SESSION_ID or str(uuid.uuid4())
+            active_sessions[DEFAULT_SESSION_ID] = {
+                "session_id": DEFAULT_SESSION_ID,
+                "session_name": DEFAULT_SESSION_NAME,
+                "agent": None,
+                "website_url": "https://www.w3schools.com/",
+                "ai_provider": provider_enum.value,
+                "status": "failed",
+                "created_at": datetime.utcnow().isoformat(),
+                "commands_executed": 0,
+                "error": f"API key for {provider_enum.value} not found in environment variables. Please add it to your .env file.",
+            }
+            return None
+
+        # Import and construct agent
+        from multi_ai_qa_agent import MultiAIQAAgent
+        session_id = str(uuid.uuid4())
+        agent = MultiAIQAAgent(ai_provider=provider_enum.value, api_key=api_key)
+        session_info = {
+            "session_id": session_id,
+            "session_name": DEFAULT_SESSION_NAME,
+            "agent": agent,
+            "website_url": "https://www.w3schools.com/",
+            "ai_provider": provider_enum.value,
+            "status": "initializing",
+            "created_at": datetime.utcnow().isoformat(),
+            "commands_executed": 0,
+        }
+        active_sessions[session_id] = session_info
+        DEFAULT_SESSION_ID = session_id
+
+        async def start_default():
+            try:
+                await agent.start_session(website_url=session_info["website_url"], auto_check=True)
+                active_sessions[session_id]["status"] = "active"
+            except Exception as e:
+                active_sessions[session_id]["status"] = "failed"
+                active_sessions[session_id]["error"] = str(e)
+
+        # Kick off without blocking
+        try:
+            asyncio.create_task(start_default())
+        except RuntimeError:
+            # If no running loop (e.g., during startup), run once the loop is ready
+            loop = asyncio.get_event_loop()
+            loop.create_task(start_default())
+
+        return session_id
+    except Exception:
+        return None
+
+def _get_default_session_or_404():
+    if not DEFAULT_SESSION_ID or DEFAULT_SESSION_ID not in active_sessions:
+        raise HTTPException(status_code=404, detail="Default session not available")
+    s = active_sessions[DEFAULT_SESSION_ID]
+    return {
+        "session_id": s["session_id"],
+        "session_name": s["session_name"],
+        "website_url": s["website_url"],
+        "ai_provider": s["ai_provider"],
+        "status": s["status"],
+        "created_at": s["created_at"],
+        "commands_executed": s["commands_executed"],
+        "error": s.get("error"),
+    }
 class MobileTestRequest(BaseModel):
     """Request to run a mobile responsiveness test"""
     deviceName: Optional[str] = Field(default="iPhone 17 Pro Max", description="Device name to emulate")
@@ -166,6 +276,18 @@ async def create_session(request: SessionCreateRequest, background_tasks: Backgr
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to import MultiAIQAAgent. Make sure multi_ai_qa_agent.py exists in the project root. Error: {str(e)}"
+            )
+
+        # If creating the default session by name and it exists, return it
+        if (request.session_name or "").strip() == DEFAULT_SESSION_NAME and DEFAULT_SESSION_ID and DEFAULT_SESSION_ID in active_sessions:
+            s = active_sessions[DEFAULT_SESSION_ID]
+            return SessionResponse(
+                session_id=s["session_id"],
+                website_url=s["website_url"],
+                ai_provider=s["ai_provider"],
+                status=s["status"],
+                created_at=s["created_at"],
+                message=f"Session '{s['session_name']}' already active"
             )
 
         # Generate session ID
@@ -365,6 +487,36 @@ async def close_session(session_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to close session: {str(e)}")
+
+
+@app.get("/api/v1/qa-tests/session-default")
+async def get_default_session():
+    """Return the default shared session, creating it if missing."""
+    # Ensure exists (best effort)
+    await _ensure_default_session()
+    return _get_default_session_or_404()
+
+
+@app.on_event("startup")
+async def _startup_default_session():
+    # Fire-and-forget creation of default session
+    await _ensure_default_session()
+
+
+@app.on_event("shutdown")
+async def _shutdown_cleanup():
+    # Close default session if present
+    try:
+        if DEFAULT_SESSION_ID and DEFAULT_SESSION_ID in active_sessions:
+            s = active_sessions[DEFAULT_SESSION_ID]
+            agent = s.get("agent")
+            if agent:
+                if hasattr(agent, 'browser') and agent.browser:
+                    await agent.browser.close()
+                if hasattr(agent, 'playwright') and agent.playwright:
+                    await agent.playwright.stop()
+    except Exception:
+        pass
 
 
 @app.post("/api/v1/qa-tests/sessions/{session_id}/mobile-test", response_model=MobileTestResponse)
