@@ -41,6 +41,8 @@ export default function QuickTest() {
     if (!session?.session_id) return
     setRunning(true)
     setResultText('')
+    // Show only current test output: clear any previous mobile screenshots
+    setMobileImages([])
     try {
       // Ensure session is active; retry briefly if not
       if (session.status !== 'active') {
