@@ -107,6 +107,15 @@ body::before {
   }
 }
 
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
@@ -244,11 +253,19 @@ body::before {
   animation: heartbeat 1.5s ease-in-out infinite;
 }
 
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-slideInUp {
+  animation: slideInUp 0.3s ease-out forwards;
+}
+
 @layer components {
   .btn {
-    @apply px-8 py-4 rounded-2xl font-semibold transition-all duration-500 transform;
+    @apply px-5 py-3 rounded-xl font-semibold transition-all duration-300 transform;
     @apply hover:scale-105 active:scale-95;
-    @apply shadow-xl hover:shadow-2xl;
+    @apply shadow-lg hover:shadow-xl;
     @apply border border-white/20;
     position: relative;
     overflow: hidden;
@@ -340,15 +357,15 @@ body::before {
   }
 
   .card {
-    @apply bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-8 border border-white/15;
-    @apply transition-all duration-700;
-    @apply hover:shadow-white/20 hover:border-white/30;
-    @apply hover:-translate-y-3 hover:scale-[1.02];
+    @apply bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-2xl rounded-2xl shadow-xl p-5 md:p-6 border border-white/15;
+    @apply transition-all duration-500;
+    @apply hover:shadow-white/20 hover:border-white/25;
+    @apply hover:-translate-y-2 hover:scale-[1.01];
     position: relative;
     overflow: hidden;
-    box-shadow: 
-      0 25px 50px rgba(0, 0, 0, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    box-shadow:
+      0 20px 40px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
       0 0 0 1px rgba(255, 255, 255, 0.05);
   }
 
@@ -437,9 +454,9 @@ body::before {
   }
 
   .badge {
-    @apply px-6 py-3 rounded-full text-sm font-bold;
+    @apply px-3 py-1.5 rounded-full text-xs font-bold;
     @apply transition-all duration-300;
-    @apply shadow-xl backdrop-blur-sm;
+    @apply shadow-lg backdrop-blur-sm;
     @apply border border-white/25;
     position: relative;
     overflow: hidden;
@@ -610,6 +627,25 @@ body::before {
     @apply transition-all duration-500 hover:shadow-white/20;
   }
 
+  /* Smooth Page Transitions */
+  @media (prefers-reduced-motion: no-preference) {
+    * {
+      scroll-behavior: smooth;
+    }
+  }
+
+  /* Enhanced Mobile Touch Feedback */
+  @media (hover: none) and (pointer: coarse) {
+    .card-stat:active,
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .hover-lift:active {
+      transform: translateY(0);
+    }
+  }
+
   /* Professional Status Indicators */
   .status-indicator {
     position: relative;
@@ -641,5 +677,45 @@ body::before {
   .status-indicator.error::before {
     background: #ef4444;
     box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+  }
+
+  /* Professional Image Transitions */
+  img {
+    @apply transition-opacity duration-300;
+  }
+
+  img:not([src]),
+  img[src=""] {
+    @apply opacity-0;
+  }
+
+  /* Enhanced Focus Accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-white/40 ring-offset-2 ring-offset-black;
+  }
+
+  /* Smooth Transitions for All Interactive Elements */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    @apply transition-all duration-300;
+  }
+
+  /* Enhanced Mobile Menu Animations */
+  @keyframes menuSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .mobile-menu-item {
+    animation: menuSlideIn 0.3s ease-out forwards;
   }
 }

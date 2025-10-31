@@ -18,6 +18,15 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Confidence scoring imports
+from qa_agent.task_confidence_checker import task_confidence_checker
+from qa_agent.api.routes.approvals import (
+    router as approvals_router,
+    approval_manager,
+    ApprovalRequest,
+    broadcast_approval_update
+)
+
 app = FastAPI(
     title="QA Agent API",
     description="Backend service for multi-AI QA automation",
@@ -41,6 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register approvals router for confidence scoring
+app.include_router(approvals_router, prefix="/api/v1")
 
 # Store active agent sessions
 active_sessions: Dict[str, Any] = {}
@@ -231,12 +243,14 @@ class MobileTestResponse(BaseModel):
 class TestResultResponse(BaseModel):
     """Test result details"""
     test_id: str
-    session_id: str
+    session_id: Optional[str] = None
     command: str
     status: TestStatus
     result: str
+    terminal_output: Optional[str] = None
     started_at: str
     completed_at: Optional[str] = None
+    executed_at: Optional[str] = None
     duration_ms: Optional[float] = None
     error: Optional[str] = None
 
@@ -672,10 +686,84 @@ async def run_mobile_test(session_id: str, request: MobileTestRequest, http_requ
 @app.post("/api/v1/qa-tests/browser-use/execute")
 async def execute_browser_use(request: BrowserUseRequest):
     """
-    Execute a simple browser automation task using browser-use library.
-    Returns structured output of agent execution history.
+    Execute a simple browser automation task with confidence scoring.
+    Analyzes task for critical operations and prompts for approval if needed.
     """
+    print("[INFO] Running standalone_backend.py execute_browser_use handler")
     try:
+        # STEP 1: Analyze the task BEFORE execution for critical operations
+        should_prompt, analysis = task_confidence_checker.should_prompt_for_approval(request.task)
+
+        # STEP 2: If risky, create approval request and wait for user response
+        if should_prompt:
+            print(f"⚠️  Task requires approval - Risk: {analysis.risk_level.value.upper()}, Confidence: {analysis.confidence_score:.0f}%")
+
+            # Create approval request
+            approval_request = ApprovalRequest(
+                action_description=request.task,
+                current_url=None,
+                element_text=None,
+                confidence_score=analysis.confidence_score / 100,
+                confidence_level=analysis.risk_level.value,
+                reasoning=analysis.recommendation,
+                risk_factors=analysis.risk_factors,
+                timeout_seconds=60
+            )
+
+            # Store approval request
+            request_id = approval_manager.create_approval_request(approval_request)
+
+            # Broadcast to frontend via WebSocket (non-blocking, ignore errors)
+            try:
+                await broadcast_approval_update({
+                    'type': 'new_request',
+                    'request_id': request_id,
+                    'action': request.task,
+                    'confidence_level': analysis.risk_level.value
+                })
+            except Exception as ws_error:
+                # WebSocket broadcast failed, but continue anyway (polling will work)
+                print(f"WebSocket broadcast failed (not critical): {ws_error}")
+
+            # Wait for user response (60 seconds timeout)
+            approved = await approval_manager.wait_for_response(request_id, timeout=60)
+
+            if not approved:
+                print("❌ Task execution denied by user or timed out")
+                # Store denied test result
+                denied_time = datetime.utcnow()
+                test_id = str(uuid.uuid4())
+                denial_message = "❌ Task execution denied by user or timed out.\n\nTask was flagged as risky and user did not approve execution."
+
+                test_results[test_id] = {
+                    "test_id": test_id,
+                    "session_id": None,
+                    "command": f"Browser automation: {request.task}",
+                    "result": denial_message,
+                    "terminal_output": denial_message,
+                    "status": TestStatus.failed,
+                    "started_at": denied_time.isoformat(),
+                    "completed_at": denied_time.isoformat(),
+                    "duration_ms": 0
+                }
+
+                return {
+                    "task": request.task,
+                    "status": "denied",
+                    "terminal_output": denial_message,
+                    "analysis": {
+                        "risk_level": analysis.risk_level.value,
+                        "confidence": analysis.confidence_score,
+                        "operations": analysis.detected_operations,
+                        "risk_factors": analysis.risk_factors
+                    },
+                    "executed_at": denied_time.isoformat(),
+                    "test_id": test_id
+                }
+
+            print("✅ Task execution approved by user")
+
+        # STEP 3: Execute the task (only if approved or safe)
         # Import browser_use components
         try:
             from browser_use import Agent as BrowserAgent, ChatGoogle
@@ -685,7 +773,7 @@ async def execute_browser_use(request: BrowserUseRequest):
                 detail="browser-use library not installed. Install with: pip install browser-use"
             )
 
-        # Import parser utility - use only the simple formatter to avoid schema dependencies
+        # Import parser utility
         from qa_agent.utils.browser_use_parser import format_terminal_output_simple
 
         # Import appropriate chat model
@@ -708,17 +796,44 @@ async def execute_browser_use(request: BrowserUseRequest):
         agent = BrowserAgent(task=request.task, llm=llm)
 
         # Run the task and get history
+        start_time = datetime.utcnow()
         history = await agent.run()
-        
-        # Create terminal-style output (simple version that doesn't need schemas)
+        end_time = datetime.utcnow()
+        duration_ms = (end_time - start_time).total_seconds() * 1000
+
+        # Create terminal-style output
         terminal_output = format_terminal_output_simple(history, request.task)
 
-        return {
+        # Store test result for Dashboard
+        test_id = str(uuid.uuid4())
+        test_results[test_id] = {
+            "test_id": test_id,
+            "session_id": None,  # Browser-use doesn't use sessions
+            "command": f"Browser automation: {request.task}",
+            "result": terminal_output,
+            "terminal_output": terminal_output,
+            "status": TestStatus.completed,
+            "started_at": start_time.isoformat(),
+            "completed_at": end_time.isoformat(),
+            "duration_ms": duration_ms
+        }
+
+        response_data = {
             "task": request.task,
             "status": "completed",
-            "terminal_output": terminal_output,  # Terminal-style formatted output
-            "executed_at": datetime.utcnow().isoformat()
+            "terminal_output": terminal_output,
+            "analysis": {
+                "risk_level": analysis.risk_level.value,
+                "confidence": analysis.confidence_score,
+                "operations": analysis.detected_operations,
+                "required_approval": should_prompt
+            },
+            "executed_at": end_time.isoformat(),
+            "test_id": test_id
         }
+        
+        print(f"[DEBUG] Browser-use returning response with test_id: {test_id}")
+        return response_data
 
     except HTTPException:
         raise
@@ -744,7 +859,7 @@ async def list_test_results(session_id: Optional[str] = None, limit: int = 50):
         results = [r for r in results if r["session_id"] == session_id]
 
     # Sort by most recent first
-    results.sort(key=lambda x: x["started_at"], reverse=True)
+    results.sort(key=lambda x: x.get("started_at") or x.get("executed_at") or x.get("completed_at") or "", reverse=True)
 
     return {
         "results": results[:limit],

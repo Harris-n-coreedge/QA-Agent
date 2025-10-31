@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, Loader, CheckCircle, XCircle, Clock, Filter } from 'lucide-react'
-import { testResultsAPI, sessionsAPI } from '../api/client'
+import { testResultsAPI } from '../api/client'
 
 function TestResultCard({ result }) {
   const [lightbox, setLightbox] = useState({ open: false, src: '' })
@@ -113,17 +113,11 @@ function TestResultCard({ result }) {
 }
 
 function TestResults() {
-  const [selectedSession, setSelectedSession] = useState(null)
   const [limit, setLimit] = useState(50)
 
-  const { data: sessions } = useQuery({
-    queryKey: ['sessions'],
-    queryFn: sessionsAPI.list,
-  })
-
   const { data: results, isLoading } = useQuery({
-    queryKey: ['test-results', selectedSession, limit],
-    queryFn: () => testResultsAPI.list(selectedSession, limit),
+    queryKey: ['test-results', limit],
+    queryFn: () => testResultsAPI.list(null, limit),
     refetchInterval: 3000,
   })
 
@@ -132,72 +126,58 @@ function TestResults() {
   const runningTests = results?.results?.filter(r => r.status === 'running').length || 0
 
   return (
-    <div className="space-y-12 fade-in">
+    <div className="space-y-6 md:space-y-8 fade-in">
       <div className="slide-in text-center">
-        <h1 className="text-8xl font-black text-gradient text-glow mb-8 tracking-tight">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-gradient text-glow mb-3 tracking-tight">
           Test Results
         </h1>
-        <p className="text-white/80 text-2xl font-medium tracking-wide">View and analyze test execution history</p>
+        <p className="text-white/70 text-sm md:text-base font-medium tracking-wide px-4">
+          View and analyze test execution history
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <div className="card-stat text-center group cursor-pointer hover-lift">
-          <p className="text-6xl font-black text-gradient text-glow mb-4 transition-all duration-700 group-hover:scale-110">
+          <p className="text-3xl md:text-4xl font-black text-gradient text-glow mb-2 transition-all duration-500 group-hover:scale-110">
             {results?.total || 0}
           </p>
-          <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Total Tests</p>
+          <p className="text-xs text-white/60 font-semibold tracking-wide uppercase">Total Tests</p>
         </div>
         <div className="card-stat text-center group cursor-pointer hover-lift">
-          <p className="text-6xl font-black text-gradient text-glow mb-4 transition-all duration-700 group-hover:scale-110">
+          <p className="text-3xl md:text-4xl font-black text-gradient text-glow mb-2 transition-all duration-500 group-hover:scale-110">
             {completedTests}
           </p>
-          <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Completed</p>
+          <p className="text-xs text-white/60 font-semibold tracking-wide uppercase">Completed</p>
         </div>
         <div className="card-stat text-center group cursor-pointer hover-lift">
-          <p className="text-6xl font-black text-gradient text-glow mb-4 transition-all duration-700 group-hover:scale-110">
+          <p className="text-3xl md:text-4xl font-black text-gradient text-glow mb-2 transition-all duration-500 group-hover:scale-110">
             {failedTests}
           </p>
-          <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Failed</p>
+          <p className="text-xs text-white/60 font-semibold tracking-wide uppercase">Failed</p>
         </div>
         <div className="card-stat text-center group cursor-pointer hover-lift">
-          <p className="text-6xl font-black text-gradient text-glow mb-4 transition-all duration-700 group-hover:scale-110">
+          <p className="text-3xl md:text-4xl font-black text-gradient text-glow mb-2 transition-all duration-500 group-hover:scale-110">
             {runningTests}
           </p>
-          <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Running</p>
+          <p className="text-xs text-white/60 font-semibold tracking-wide uppercase">Running</p>
         </div>
       </div>
 
       <div className="card hover-lift">
-        <div className="flex items-center space-x-6 mb-10">
-          <div className="bg-gradient-to-br from-indigo-500/25 to-purple-500/15 p-4 rounded-2xl border border-indigo-500/30 shadow-2xl">
-            <Filter className="w-8 h-8 text-indigo-300" />
+        <div className="flex items-center space-x-3 md:space-x-4 mb-5">
+          <div className="bg-gradient-to-br from-indigo-500/25 to-purple-500/15 p-3 rounded-2xl border border-indigo-500/30 shadow-xl">
+            <Filter className="w-6 h-6 md:w-7 md:h-7 text-indigo-300" />
           </div>
-          <h2 className="text-4xl font-bold text-gradient text-glow">
+          <h2 className="text-lg md:text-xl font-bold text-gradient text-glow">
             Filters
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 gap-4 md:gap-5">
           <div>
-            <label className="label">Filter by Session</label>
+            <label className="label text-xs">Results Limit</label>
             <select
-              className="input text-lg"
-              value={selectedSession || ''}
-              onChange={(e) => setSelectedSession(e.target.value || null)}
-            >
-              <option value="">All Sessions</option>
-              {sessions?.sessions?.map((session) => (
-                <option key={session.session_id} value={session.session_id}>
-                  {session.session_name} - {session.website_url}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="label">Results Limit</label>
-            <select
-              className="input text-lg"
+              className="input text-sm md:text-base"
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
             >
@@ -232,9 +212,7 @@ function TestResults() {
             No Test Results
           </h3>
           <p className="text-white/80 text-2xl font-medium">
-            {selectedSession
-              ? 'No results found for the selected session'
-              : 'Execute some tests to see results here'}
+            Execute some tests to see results here
           </p>
         </div>
       )}
