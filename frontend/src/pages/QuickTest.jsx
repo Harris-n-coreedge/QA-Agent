@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { sessionsAPI } from '../api/client'
+import { agentAPI } from '../api/client'
 
 const providers = [
   { value: 'openai', label: 'OpenAI' },
@@ -10,27 +10,32 @@ const providers = [
 export default function QuickTest() {
   const [websiteUrl, setWebsiteUrl] = useState('https://www.w3schools.com/')
   const [aiProvider, setAiProvider] = useState('google')
-  const [session, setSession] = useState(null)
+  const [agentStatus, setAgentStatus] = useState(null)
   const [running, setRunning] = useState(false)
   const [resultText, setResultText] = useState('')
   const [mobileImages, setMobileImages] = useState([])
   const [selectedDevice, setSelectedDevice] = useState('iPhone 17 Pro Max')
   const [custom, setCustom] = useState({ width: '', height: '', deviceScaleFactor: '1', name: '' })
   const [lightbox, setLightbox] = useState({ open: false, src: '' })
+  const [showBrowser, setShowBrowser] = useState(false)
+  const [browserScreenshot, setBrowserScreenshot] = useState(null)
+  const [browserUrl, setBrowserUrl] = useState(null)
+  const [currentBrowser, setCurrentBrowser] = useState(null) // For cross-browser test
+  const [crossBrowserResults, setCrossBrowserResults] = useState(null)
 
-  // Use globally shared default session; fetch once and refresh status periodically
+  // Fetch agent status periodically
   useEffect(() => {
     let alive = true
-    const fetchDefault = async () => {
+    const fetchStatus = async () => {
       try {
-        const res = await sessionsAPI.sessionDefault()
-        if (alive) setSession(res)
+        const res = await agentAPI.getStatus()
+        if (alive) setAgentStatus(res)
       } catch (_) {
         // ignore; dashboard will surface health
       }
     }
-    fetchDefault()
-    const id = setInterval(fetchDefault, 5000)
+    fetchStatus()
+    const id = setInterval(fetchStatus, 5000)
     return () => {
       alive = false
       clearInterval(id)
@@ -38,56 +43,100 @@ export default function QuickTest() {
   }, [])
 
   const runCommand = async (command) => {
-    if (!session?.session_id) return
     setRunning(true)
     setResultText('')
-    // Show only current test output: clear any previous mobile screenshots
     setMobileImages([])
+    
+    // Show embedded browser before starting test
+    setShowBrowser(true)
+    
     try {
-      // Ensure session is active; retry briefly if not
-      if (session.status !== 'active') {
-        try {
-          const timeoutAt = Date.now() + 20000
-          while (Date.now() < timeoutAt) {
-            const s = await sessionsAPI.get(session.session_id)
-            if (s.status === 'active') {
-              setSession(s)
-              break
-            }
-            await new Promise(r => setTimeout(r, 600))
+      // Wait for agent to be ready if initializing
+      if (agentStatus?.status === 'initializing') {
+        let attempts = 0
+        while (attempts < 10) {
+          await new Promise(r => setTimeout(r, 1000))
+          const status = await agentAPI.getStatus()
+          if (status.status === 'active') {
+            setAgentStatus(status)
+            break
+          } else if (status.status === 'failed') {
+            throw new Error(status.error || 'Agent initialization failed')
           }
-        } catch (_) {}
-      }
-
-      let res
-      let attempts = 0
-      while (attempts < 3) {
-        try {
-          res = await sessionsAPI.executeCommand(session.session_id, command)
-          break
-        } catch (err) {
-          const code = err?.response?.status
-          if (code === 404) {
-            await new Promise(r => setTimeout(r, 800))
-            attempts++
-            continue
-          }
-          throw err
+          attempts++
         }
       }
-      setResultText(res?.result || 'Completed')
+
+      // Navigate to the website URL before running the command
+      if (websiteUrl && websiteUrl.trim()) {
+        try {
+          const navResult = await agentAPI.navigateToUrl(websiteUrl.trim())
+          console.log('Navigation result:', navResult)
+          // Update browser URL after navigation
+          if (navResult.actual_url) {
+            setBrowserUrl(navResult.actual_url)
+          }
+          // Small delay to ensure navigation completes
+          await new Promise(r => setTimeout(r, 1000))
+        } catch (navError) {
+          console.error('Navigation error:', navError)
+          const errorMsg = navError?.response?.data?.detail || navError?.message || 'Navigation failed'
+          setResultText(`Navigation failed: ${errorMsg}`)
+          throw new Error(`Failed to navigate to ${websiteUrl}: ${errorMsg}`)
+        }
+      }
+
+      // Start screenshot polling during test execution
+      let screenshotInterval = null
+      screenshotInterval = setInterval(async () => {
+        try {
+          const browserView = await agentAPI.getBrowserView()
+          if (browserView.active && browserView.screenshot_data_url) {
+            setBrowserScreenshot(browserView.screenshot_data_url)
+            setBrowserUrl(browserView.page_url)
+          }
+        } catch (e) {
+          console.warn('Could not get browser screenshot:', e)
+        }
+      }, 500) // Poll every 500ms for smooth view
+
+      try {
+        // Execute command
+        const res = await agentAPI.executeCommand(command)
+        
+        // Stop screenshot polling
+        if (screenshotInterval) clearInterval(screenshotInterval)
+        
+        setResultText(res?.result || 'Completed')
+        
+        // Hide browser when results arrive
+        setShowBrowser(false)
+        setBrowserScreenshot(null)
+        setBrowserUrl(null)
+      } catch (cmdError) {
+        // Stop screenshot polling on error
+        if (screenshotInterval) clearInterval(screenshotInterval)
+        throw cmdError
+      }
     } catch (e) {
       setResultText(`Failed: ${e?.response?.data?.detail || e.message}`)
+      // Hide browser on error
+      setShowBrowser(false)
+      setBrowserScreenshot(null)
+      setBrowserUrl(null)
     } finally {
       setRunning(false)
     }
   }
 
   const runMobile = async () => {
-    if (!session?.session_id) return
     setRunning(true)
     setResultText('')
     setMobileImages([])
+    
+    // Show embedded browser before starting test
+    setShowBrowser(true)
+    
     try {
       const isCustom = selectedDevice === 'Custom'
       const payload = isCustom
@@ -100,43 +149,201 @@ export default function QuickTest() {
             },
           }
         : { deviceName: selectedDevice }
-      // Ensure session is active; retry briefly if not
-      if (session.status !== 'active') {
-        try {
-          const timeoutAt = Date.now() + 20000
-          while (Date.now() < timeoutAt) {
-            const s = await sessionsAPI.get(session.session_id)
-            if (s.status === 'active') {
-              setSession(s)
-              break
-            }
-            await new Promise(r => setTimeout(r, 600))
-          }
-        } catch (_) {}
-      }
 
-      let res
-      let attempts = 0
-      while (attempts < 5) {
-        try {
-          res = await sessionsAPI.mobileTest(session.session_id, payload)
-          break
-        } catch (err) {
-          const code = err?.response?.status
-          if (code === 404) {
-            await new Promise(r => setTimeout(r, 900))
-            attempts++
-            continue
+      // Wait for agent to be ready if initializing
+      if (agentStatus?.status === 'initializing') {
+        let attempts = 0
+        while (attempts < 10) {
+          await new Promise(r => setTimeout(r, 1000))
+          const status = await agentAPI.getStatus()
+          if (status.status === 'active') {
+            setAgentStatus(status)
+            break
+          } else if (status.status === 'failed') {
+            throw new Error(status.error || 'Agent initialization failed')
           }
-          throw err
+          attempts++
         }
       }
-      setResultText(res?.message || 'Mobile test done')
-      // cache-bust each image URL
-      const shots = (res?.screenshots || []).map((u) => `${u}?t=${Date.now()}`)
-      setMobileImages(shots)
+
+      // Navigate to the website URL before running the mobile test
+      if (websiteUrl && websiteUrl.trim()) {
+        try {
+          const navResult = await agentAPI.navigateToUrl(websiteUrl.trim())
+          console.log('Navigation result:', navResult)
+          // Update browser URL after navigation
+          if (navResult.actual_url) {
+            setBrowserUrl(navResult.actual_url)
+          }
+          // Small delay to ensure navigation completes
+          await new Promise(r => setTimeout(r, 1000))
+        } catch (navError) {
+          console.error('Navigation error:', navError)
+          const errorMsg = navError?.response?.data?.detail || navError?.message || 'Navigation failed'
+          setResultText(`Navigation failed: ${errorMsg}`)
+          throw new Error(`Failed to navigate to ${websiteUrl}: ${errorMsg}`)
+        }
+      }
+
+      // Start screenshot polling during test execution
+      let screenshotInterval = null
+      screenshotInterval = setInterval(async () => {
+        try {
+          const browserView = await agentAPI.getBrowserView()
+          if (browserView.active && browserView.screenshot_data_url) {
+            setBrowserScreenshot(browserView.screenshot_data_url)
+            setBrowserUrl(browserView.page_url)
+          }
+        } catch (e) {
+          console.warn('Could not get browser screenshot:', e)
+        }
+      }, 500) // Poll every 500ms for smooth view
+
+      try {
+        const res = await agentAPI.mobileTest(payload)
+        
+        // Stop screenshot polling
+        if (screenshotInterval) clearInterval(screenshotInterval)
+        
+        setResultText(res?.message || 'Mobile test done')
+        // cache-bust each image URL
+        const shots = (res?.screenshots || []).map((u) => `${u}?t=${Date.now()}`)
+        setMobileImages(shots)
+        
+        // Hide browser when results arrive
+        setShowBrowser(false)
+        setBrowserScreenshot(null)
+        setBrowserUrl(null)
+      } catch (testError) {
+        // Stop screenshot polling on error
+        if (screenshotInterval) clearInterval(screenshotInterval)
+        throw testError
+      }
     } catch (e) {
       setResultText(`Failed: ${e?.response?.data?.detail || e.message}`)
+      // Hide browser on error
+      setShowBrowser(false)
+      setBrowserScreenshot(null)
+      setBrowserUrl(null)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const runCrossBrowserTest = async () => {
+    setRunning(true)
+    setResultText('')
+    setMobileImages([])
+    setCrossBrowserResults(null)
+    
+    // Show embedded browser before starting test
+    setShowBrowser(true)
+    setCurrentBrowser('Initializing...')
+    
+    try {
+      // Wait for agent to be ready if initializing
+      if (agentStatus?.status === 'initializing') {
+        let attempts = 0
+        while (attempts < 10) {
+          await new Promise(r => setTimeout(r, 1000))
+          const status = await agentAPI.getStatus()
+          if (status.status === 'active') {
+            setAgentStatus(status)
+            break
+          } else if (status.status === 'failed') {
+            throw new Error(status.error || 'Agent initialization failed')
+          }
+          attempts++
+        }
+      }
+
+      // Navigate to the website URL before running the cross-browser test
+      if (websiteUrl && websiteUrl.trim()) {
+        try {
+          const navResult = await agentAPI.navigateToUrl(websiteUrl.trim())
+          if (navResult.actual_url) {
+            setBrowserUrl(navResult.actual_url)
+          }
+          await new Promise(r => setTimeout(r, 1000))
+        } catch (navError) {
+          console.error('Navigation error:', navError)
+          const errorMsg = navError?.response?.data?.detail || navError?.message || 'Navigation failed'
+          setResultText(`Navigation failed: ${errorMsg}`)
+          throw new Error(`Failed to navigate to ${websiteUrl}: ${errorMsg}`)
+        }
+      }
+
+      // Start screenshot polling during test execution
+      let screenshotInterval = null
+      screenshotInterval = setInterval(async () => {
+        try {
+          const browserView = await agentAPI.getBrowserView()
+          if (browserView.active && browserView.screenshot_data_url) {
+            setBrowserScreenshot(browserView.screenshot_data_url)
+            setBrowserUrl(browserView.page_url)
+          }
+        } catch (e) {
+          console.warn('Could not get browser screenshot:', e)
+        }
+      }, 500)
+
+      // Run cross-browser test - test each browser sequentially
+      const browsers = ['chromium', 'firefox', 'webkit']
+      const testResults = {}
+      
+      for (const browserType of browsers) {
+        try {
+          // Show which browser is being tested
+          setCurrentBrowser(`Testing ${browserType.charAt(0).toUpperCase() + browserType.slice(1)}...`)
+          
+          // Call the cross-browser test endpoint for this specific browser
+          const res = await agentAPI.crossBrowserTest(websiteUrl?.trim() || null, browserType)
+          
+          // Extract result for current browser
+          if (res.browsers && res.browsers[browserType]) {
+            testResults[browserType] = res.browsers[browserType]
+            
+            // Update screenshot if available
+            if (res.browsers[browserType].screenshot) {
+              setBrowserScreenshot(res.browsers[browserType].screenshot)
+            }
+          }
+          
+          // Small delay between browsers for visual feedback
+          await new Promise(r => setTimeout(r, 500))
+        } catch (e) {
+          testResults[browserType] = { status: 'failed', error: e.message }
+        }
+      }
+      
+      // Stop screenshot polling
+      if (screenshotInterval) clearInterval(screenshotInterval)
+      
+      // Format results
+      const resultLines = ["🌐 Cross-Browser Test Results:"]
+      for (const [browser, result] of Object.entries(testResults)) {
+        if (result.status === 'success') {
+          resultLines.push(`   ✅ ${browser.charAt(0).toUpperCase() + browser.slice(1)}: Success - ${result.title}`)
+        } else {
+          resultLines.push(`   ❌ ${browser.charAt(0).toUpperCase() + browser.slice(1)}: Failed - ${result.error || 'Unknown error'}`)
+        }
+      }
+      
+      setResultText(resultLines.join('\n'))
+      setCrossBrowserResults(testResults)
+      
+      // Hide browser when results arrive
+      setShowBrowser(false)
+      setBrowserScreenshot(null)
+      setBrowserUrl(null)
+      setCurrentBrowser(null)
+    } catch (e) {
+      setResultText(`Failed: ${e?.response?.data?.detail || e.message}`)
+      // Hide browser on error
+      setShowBrowser(false)
+      setBrowserScreenshot(null)
+      setBrowserUrl(null)
+      setCurrentBrowser(null)
     } finally {
       setRunning(false)
     }
@@ -173,12 +380,15 @@ export default function QuickTest() {
             </select>
           </div>
         </div>
-        {session?.session_id ? (
+        {agentStatus ? (
           <div className="text-sm text-white/70">
-            Using global session: <span className="font-mono">{session.session_id}</span> (<span>{session.status}</span>)
+            Agent Status: <span className="font-mono">{agentStatus.status}</span>
+            {agentStatus.commands_executed > 0 && (
+              <span className="ml-4">({agentStatus.commands_executed} commands executed)</span>
+            )}
           </div>
         ) : (
-          <div className="text-sm text-white/60">Waiting for global session...</div>
+          <div className="text-sm text-white/60">Waiting for agent...</div>
         )}
       </div>
 
@@ -188,7 +398,7 @@ export default function QuickTest() {
           <p className="text-white/70 text-sm">Runs baseline QA checks: load, header/footer, auth buttons, performance, security headers, accessibility, and UI scan.</p>
           <button
             onClick={() => runCommand('auto check')}
-            disabled={!session || running}
+            disabled={running}
             className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 disabled:opacity-50"
           >Run Auto Check</button>
         </div>
@@ -198,7 +408,7 @@ export default function QuickTest() {
           <p className="text-white/70 text-sm">Performs SEO, link health, images, cookies, resources, and forms audit with actionable suggestions.</p>
           <button
             onClick={() => runCommand('auto audit')}
-            disabled={!session || running}
+            disabled={running}
             className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 disabled:opacity-50"
           >Run Auto Audit</button>
         </div>
@@ -207,8 +417,8 @@ export default function QuickTest() {
           <h2 className="text-xl font-semibold text-white">Cross-Browser</h2>
           <p className="text-white/70 text-sm">Opens Chromium, Firefox, and WebKit to validate basic load and collect screenshots.</p>
           <button
-            onClick={() => runCommand('cross-browser test')}
-            disabled={!session || running}
+            onClick={() => runCrossBrowserTest()}
+            disabled={running}
             className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 disabled:opacity-50"
           >Run Cross-Browser</button>
         </div>
@@ -277,12 +487,96 @@ export default function QuickTest() {
             </div>
             <button
               onClick={runMobile}
-              disabled={!session || running}
+              disabled={running}
               className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 disabled:opacity-50"
             >Run Mobile Test</button>
           </div>
         </div>
       </div>
+
+      {/* Embedded Browser View - Shows screenshots during test execution, hides when results arrive */}
+      {showBrowser && (
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+          <h3 className="text-lg font-semibold text-white mb-4">Live Browser View</h3>
+          
+          {/* Browser Title Bar - Shows which browser is being tested */}
+          {currentBrowser && currentBrowser.includes('Testing') && (
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 border border-white/20 rounded-t-xl px-4 py-3 mb-0 flex items-center justify-between shadow-lg">
+              <div className="flex items-center gap-3">
+                <div className="flex gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                </div>
+                <span className="text-white font-semibold">
+                  {currentBrowser}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                {(() => {
+                  const browserMatch = currentBrowser.match(/Testing\s+(\w+)/i)
+                  if (browserMatch) {
+                    const browserName = browserMatch[1].toLowerCase()
+                    const browserIcons = {
+                      chromium: '🌐',
+                      firefox: '🦊',
+                      webkit: '🧭'
+                    }
+                    return (
+                      <>
+                        <span className="text-2xl">
+                          {browserIcons[browserName] || '🌐'}
+                        </span>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await agentAPI.openBrowserExternal(websiteUrl?.trim() || null, browserName)
+                              console.log(`Opened ${browserName} externally`)
+                            } catch (e) {
+                              console.error(`Failed to open ${browserName} externally:`, e)
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs bg-white/20 hover:bg-white/30 text-white rounded-lg border border-white/30 transition-colors"
+                          title={`Open ${browserName.charAt(0).toUpperCase() + browserName.slice(1)} externally with full browser UI`}
+                        >
+                          Open Externally
+                        </button>
+                      </>
+                    )
+                  }
+                  return null
+                })()}
+              </div>
+            </div>
+          )}
+          
+          {browserScreenshot ? (
+            <>
+              <div 
+                className={`bg-black/40 border border-white/10 rounded-xl overflow-hidden ${currentBrowser && currentBrowser.includes('Testing') ? 'rounded-t-none' : ''}`}
+                style={{ height: '600px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <img 
+                  src={browserScreenshot} 
+                  alt="Live Browser View" 
+                  className="max-w-full max-h-full object-contain"
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+              </div>
+              {browserUrl && (
+                <p className="text-white/50 text-sm mt-2">
+                  Current URL: <span className="font-mono text-white/70">{browserUrl}</span>
+                </p>
+              )}
+              <p className="text-white/50 text-sm mt-1">Browser view will close automatically when test completes</p>
+            </>
+          ) : (
+            <div className="bg-black/40 border border-white/10 rounded-xl overflow-hidden flex items-center justify-center" style={{ height: '600px' }}>
+              <p className="text-white/70">Initializing browser...</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {resultText && (
         <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
@@ -319,5 +613,7 @@ export default function QuickTest() {
     </div>
   )
 }
+
+
 
 

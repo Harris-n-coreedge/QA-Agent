@@ -2,7 +2,7 @@
   TEST EXECUTION SUMMARY
 ═══════════════════════════════════════════════════════
 
-Task: We are going to check a test case, we will go to the website https://www.w3schools.com, click on sign button and login with the following credentials: username: abc@dd.com, password: 123 and then click again on sign in button and extract the error message and if error a message is displayed 'Incorrect username or password' then test case is passed otherwise it is failed
+Task: We are going to check a test case, we will go to the website https://www.w3schools.com, click on sign button and login with the following credentials: username: abc@dd.com, password: 123 and then click again on sign in button and extract the error message and if error a message is displayed 'Try Again' then test case is passed otherwise it is failed
 
 ───────────────────────────────────────────────────────
 STEP 1
@@ -52,9 +52,21 @@ Result: Clicked element
 STEP 6
 ───────────────────────────────────────────────────────
 
-Action: Task completed: True - Test Case Result:\n\n1. Credentials used: username: abc@dd.com, password: 123.\n2. Extracted error mess - 302 more characters
+Action: Sent keys: Enter
 
-Result: Test Case Result:\n\n1. Credentials used: username: abc@dd.com, password: 123.\n2. Extracted error message: 'Invalid username or password'.\n3. Expected error message for test case pass: 'Incorrect username or password'.\n\nSince the extracted error message ('Invalid username or password') does not match the expected error message ('Incorrect username or password'), the test case is considered **failed**.
+───────────────────────────────────────────────────────
+STEP 7
+───────────────────────────────────────────────────────
+
+Action: <url>\nhttps://www.w3schools.com/\n</url>\n<query>\nThe error message text displayed in the login modal after submission.\n</query>\n<result>\nInvalid username or password\n</result>
+
+───────────────────────────────────────────────────────
+STEP 8
+───────────────────────────────────────────────────────
+
+Action: Task completed: True - Test Case Result:\n\n1. Navigated to https://www.w3schools.com.\n2. Attempted login with username: `abc - 273 more characters
+
+Result: Test Case Result:\n\n1. Navigated to https://www.w3schools.com.\n2. Attempted login with username: `abc@dd.com` and password: `123`.\n3. Extracted the error message: `Invalid username or password`.\n\nCondition check: The test case passes if the error message contains 'Try Again'.\n\nResult: The extracted error message does not contain 'Try Again'.\n\nConclusion: Test case failed.
 
 Status: ✅ SUCCESS
 
@@ -70,10 +82,12 @@ TEST SUMMARY
 Final Result:
 
   Test Case Result:
-  1. Credentials used: username: abc@dd.com, password: 123.
-  2. Extracted error message: 'Invalid username or password'.
-  3. Expected error message for test case pass: 'Incorrect username or password'.
-  Since the extracted error message ('Invalid username or password') does not match the expected error message ('Incorrect username or password'), the test case is considered **failed**.
+  1. Navigated to https://www.w3schools.com.
+  2. Attempted login with username: `abc@dd.com` and password: `123`.
+  3. Extracted the error message: `Invalid username or password`.
+  Condition check: The test case passes if the error message contains 'Try Again'.
+  Result: The extracted error message does not contain 'Try Again'.
+  Conclusion: Test case failed.
 
 
 ═══════════════════════════════════════════════════════

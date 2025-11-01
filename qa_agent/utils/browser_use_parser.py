@@ -347,32 +347,42 @@ def format_terminal_output_simple(history, task: str) -> str:
         # Prefer done_text if it's longer or if long_term_memory was not found
         if done_text and (final_text is None or len(done_text) > len(final_text) or 'more characters' in final_text if final_text else False):
             final_text = done_text
-            
-            # Extract the conclusion
+        
+        # Extract the conclusion
         if final_text:
             # First check for failure indicators (more comprehensive detection)
-            has_failure_indicators = (
-                "Test case is FAILED" in final_text or 
-                "test case is **failed**" in final_text or
-                "the test case is considered **failed**" in final_text or
-                "test case is considered failed" in final_text or
-                "test case is considered **failed**" in final_text or
-                "does not match" in final_text or
-                "not match" in final_text or
-                "mismatch" in final_text or
-                done_success is False
-            )
+            # Use case-insensitive regex to catch variations
+            failure_patterns = [
+                r"Test case is FAILED",
+                r"test case is \*\*failed\*\*",
+                r"Conclusion:\s*Test case failed",
+                r"Conclusion:.*[Tt]est case failed",
+                r"Test case failed",  # Simple explicit pattern
+                r"does not match",
+                r"not match",
+                r"mismatch"
+            ]
             
-            # Then check for pass indicators
+            # Check if any failure pattern matches (case-insensitive)
+            has_failure_indicators = any(
+                re.search(pattern, final_text, re.IGNORECASE) for pattern in failure_patterns
+            ) or done_success is False
+            
+            # Then check for pass indicators (only explicit statements, no "consider/considered")
+            pass_patterns = [
+                r"Test case is PASSED",
+                r"test case is \*\*passed\*\*",
+                r"Conclusion:\s*Test case passed",
+                r"Conclusion:.*[Tt]est case passed",
+                r"Test case passed"  # Simple explicit pattern
+            ]
+            
             has_pass_indicators = (
-                "Test case is PASSED" in final_text or 
-                "test case is **passed**" in final_text or
-                "test case is considered **passed**" in final_text or
-                "test case is considered passed" in final_text or
+                any(re.search(pattern, final_text, re.IGNORECASE) for pattern in pass_patterns) or
                 done_success is True
             )
             
-            # Prioritize failure detection
+            # Prioritize failure detection - conclusion text takes priority over success flags
             if has_failure_indicators and not has_pass_indicators:
                 lines.append("✗ TEST CASE STATUS: FAILED")
                 test_passed = False
@@ -384,7 +394,12 @@ def format_terminal_output_simple(history, task: str) -> str:
                 lines.append("✗ TEST CASE STATUS: FAILED")
                 test_passed = False
             else:
-                if final_status:
+                # If no clear conclusion in final_text, check if we have conclusion pattern
+                # This handles cases where conclusion appears but wasn't caught by patterns above
+                if re.search(r"Conclusion:.*failed", final_text, re.IGNORECASE):
+                    lines.append("✗ TEST CASE STATUS: FAILED")
+                    test_passed = False
+                elif final_status:
                     lines.append(f"TEST STATUS: {final_status}")
             
             lines.append("")

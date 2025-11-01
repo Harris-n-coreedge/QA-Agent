@@ -9,37 +9,28 @@ const apiClient = axios.create({
   },
 })
 
-// Sessions API
-export const sessionsAPI = {
-  create: async (data) => {
-    const response = await apiClient.post('/qa-tests/sessions', data)
+// Agent API
+export const agentAPI = {
+  getStatus: async () => {
+    const response = await apiClient.get('/qa-tests/agent-status')
     return response.data
   },
 
-  sessionDefault: async () => {
-    const response = await apiClient.get('/qa-tests/session-default')
+  navigateToUrl: async (websiteUrl) => {
+    const response = await apiClient.post('/qa-tests/navigate', {
+      website_url: websiteUrl,
+    })
     return response.data
   },
 
-  list: async () => {
-    const response = await apiClient.get('/qa-tests/sessions')
-    return response.data
-  },
-
-  get: async (sessionId) => {
-    const response = await apiClient.get(`/qa-tests/sessions/${sessionId}`)
-    return response.data
-  },
-
-  executeCommand: async (sessionId, command) => {
-    const response = await apiClient.post(`/qa-tests/sessions/${sessionId}/commands`, {
-      session_id: sessionId,
+  executeCommand: async (command) => {
+    const response = await apiClient.post('/qa-tests/commands', {
       command,
     })
     return response.data
   },
 
-  mobileTest: async (sessionId, opts = { deviceName: 'iPhone 17 Pro Max', custom: null }) => {
+  mobileTest: async (opts = { deviceName: 'iPhone 17 Pro Max', custom: null }) => {
     const payload = {}
     if (opts?.custom) {
       payload.custom = opts.custom
@@ -47,12 +38,28 @@ export const sessionsAPI = {
     } else if (opts?.deviceName) {
       payload.deviceName = opts.deviceName
     }
-    const response = await apiClient.post(`/qa-tests/sessions/${sessionId}/mobile-test`, payload)
+    const response = await apiClient.post('/qa-tests/mobile-test', payload)
     return response.data
   },
 
-  close: async (sessionId) => {
-    const response = await apiClient.delete(`/qa-tests/sessions/${sessionId}`)
+  getBrowserView: async () => {
+    const response = await apiClient.get('/qa-tests/browser-view')
+    return response.data
+  },
+
+  crossBrowserTest: async (websiteUrl, browserType = null) => {
+    const response = await apiClient.post('/qa-tests/cross-browser-test', {
+      website_url: websiteUrl,
+      browser_type: browserType,
+    })
+    return response.data
+  },
+
+  openBrowserExternal: async (websiteUrl, browserType) => {
+    const response = await apiClient.post('/qa-tests/open-browser-external', {
+      website_url: websiteUrl,
+      browser_type: browserType,
+    })
     return response.data
   },
 }
@@ -70,9 +77,8 @@ export const browserUseAPI = {
 
 // Test Results API
 export const testResultsAPI = {
-  list: async (sessionId = null, limit = 50) => {
+  list: async (limit = 50) => {
     const params = new URLSearchParams()
-    if (sessionId) params.append('session_id', sessionId)
     if (limit) params.append('limit', limit)
 
     const response = await apiClient.get(`/qa-tests/test-results?${params}`)

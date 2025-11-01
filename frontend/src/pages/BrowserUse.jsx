@@ -1,17 +1,20 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Zap, Loader, CheckCircle, XCircle, Clock, Terminal, Globe, Brain, Activity, FileText, Code, Database } from 'lucide-react'
 import { browserUseAPI } from '../api/client'
 
 function BrowserUse() {
   const [task, setTask] = useState('')
   const [results, setResults] = useState([])
+  const queryClient = useQueryClient()
 
   const executeMutation = useMutation({
     mutationFn: (taskDescription) => browserUseAPI.execute(taskDescription, 'google'),
     onSuccess: (data) => {
       setResults([{ ...data, id: Date.now() }, ...results])
       setTask('')
+      // Invalidate test results query to refresh Dashboard and Test Results pages
+      queryClient.invalidateQueries({ queryKey: ['test-results'] })
     },
   })
 

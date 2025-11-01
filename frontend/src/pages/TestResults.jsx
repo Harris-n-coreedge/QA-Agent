@@ -1,20 +1,22 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, Loader, CheckCircle, XCircle, Clock, Filter } from 'lucide-react'
-import { testResultsAPI, sessionsAPI } from '../api/client'
+import { testResultsAPI } from '../api/client'
 
 function TestResultCard({ result }) {
   const [lightbox, setLightbox] = useState({ open: false, src: '' })
   
   const statusIcons = {
-    completed: <CheckCircle className="w-5 h-5 text-green-500" />,
+    passed: <CheckCircle className="w-5 h-5 text-green-500" />,
+    completed: <Clock className="w-5 h-5 text-yellow-500" />,
     failed: <XCircle className="w-5 h-5 text-red-500" />,
     running: <Loader className="w-5 h-5 text-blue-500 animate-spin" />,
     pending: <Clock className="w-5 h-5 text-yellow-500" />,
   }
 
   const statusColors = {
-    completed: 'badge-success',
+    passed: 'badge-success',
+    completed: 'badge-warning',
     failed: 'badge-error',
     running: 'badge-info',
     pending: 'badge-warning',
@@ -28,12 +30,17 @@ function TestResultCard({ result }) {
       <div className="flex items-start space-x-6">
         <div className="mt-2">{statusIcons[result.status]}</div>
         <div className="flex-1">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-3xl font-bold text-gradient text-glow">
+          <div className="flex items-start justify-between mb-6 gap-6">
+            <h3 className="text-3xl font-bold text-gradient text-glow flex-1">
               {result.command}
             </h3>
-            <span className={`badge ${statusColors[result.status]} hover:scale-110 transition-transform duration-500`}>
-              {result.status}
+            <span className={`badge ${statusColors[result.status]} hover:scale-105 transition-transform duration-500 px-4 py-2 text-sm font-semibold tracking-wide uppercase whitespace-nowrap flex-shrink-0`}>
+              {result.status === 'passed' ? 'PASSED' : 
+               result.status === 'completed' ? 'COMPLETED' :
+               result.status === 'failed' ? 'FAILED' :
+               result.status === 'running' ? 'RUNNING' :
+               result.status === 'pending' ? 'PENDING' :
+               result.status?.toUpperCase() || 'UNKNOWN'}
             </span>
           </div>
 
@@ -70,7 +77,11 @@ function TestResultCard({ result }) {
           {result.result && (
             <div className="bg-gradient-to-br from-white/10 to-white/5 p-8 rounded-3xl border border-white/15 shadow-xl">
               <h4 className="text-lg font-bold text-emerald-300 mb-4">Result:</h4>
-              <p className="text-white whitespace-pre-wrap leading-relaxed text-base">{result.result}</p>
+              <div className="bg-black/50 p-6 rounded-2xl border border-white/10 overflow-x-auto">
+                <pre className="text-white/90 whitespace-pre-wrap leading-relaxed text-sm font-mono max-h-[600px] overflow-y-auto">
+                  {result.result}
+                </pre>
+              </div>
             </div>
           )}
 
@@ -113,21 +124,16 @@ function TestResultCard({ result }) {
 }
 
 function TestResults() {
-  const [selectedSession, setSelectedSession] = useState(null)
   const [limit, setLimit] = useState(50)
 
-  const { data: sessions } = useQuery({
-    queryKey: ['sessions'],
-    queryFn: sessionsAPI.list,
-  })
-
   const { data: results, isLoading } = useQuery({
-    queryKey: ['test-results', selectedSession, limit],
-    queryFn: () => testResultsAPI.list(selectedSession, limit),
+    queryKey: ['test-results', limit],
+    queryFn: () => testResultsAPI.list(limit),
     refetchInterval: 3000,
   })
 
-  const completedTests = results?.results?.filter(r => r.status === 'completed').length || 0
+  const passedTests = results?.results?.filter(r => r.status === 'passed').length || 0
+  const completedTests = results?.results?.filter(r => r.status === 'completed' || r.status === 'passed' || r.status === 'failed').length || 0
   const failedTests = results?.results?.filter(r => r.status === 'failed').length || 0
   const runningTests = results?.results?.filter(r => r.status === 'running').length || 0
 
@@ -140,12 +146,18 @@ function TestResults() {
         <p className="text-white/80 text-2xl font-medium tracking-wide">View and analyze test execution history</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
         <div className="card-stat text-center group cursor-pointer hover-lift">
           <p className="text-6xl font-black text-gradient text-glow mb-4 transition-all duration-700 group-hover:scale-110">
             {results?.total || 0}
           </p>
           <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Total Tests</p>
+        </div>
+        <div className="card-stat text-center group cursor-pointer hover-lift">
+          <p className="text-6xl font-black text-gradient text-glow mb-4 transition-all duration-700 group-hover:scale-110">
+            {passedTests}
+          </p>
+          <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Passed</p>
         </div>
         <div className="card-stat text-center group cursor-pointer hover-lift">
           <p className="text-6xl font-black text-gradient text-glow mb-4 transition-all duration-700 group-hover:scale-110">
@@ -177,23 +189,7 @@ function TestResults() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div>
-            <label className="label">Filter by Session</label>
-            <select
-              className="input text-lg"
-              value={selectedSession || ''}
-              onChange={(e) => setSelectedSession(e.target.value || null)}
-            >
-              <option value="">All Sessions</option>
-              {sessions?.sessions?.map((session) => (
-                <option key={session.session_id} value={session.session_id}>
-                  {session.session_name} - {session.website_url}
-                </option>
-              ))}
-            </select>
-          </div>
-
+        <div className="grid grid-cols-1 md:grid-cols-1 gap-8">
           <div>
             <label className="label">Results Limit</label>
             <select
@@ -232,9 +228,7 @@ function TestResults() {
             No Test Results
           </h3>
           <p className="text-white/80 text-2xl font-medium">
-            {selectedSession
-              ? 'No results found for the selected session'
-              : 'Execute some tests to see results here'}
+            Execute some tests to see results here
           </p>
         </div>
       )}

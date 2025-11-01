@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 from enum import Enum
+from contextlib import asynccontextmanager
 import asyncio
 import json
 from datetime import datetime
@@ -18,36 +19,14 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-app = FastAPI(
-    title="QA Agent API",
-    description="Backend service for multi-AI QA automation",
-    version="1.0.0",
-)
-# Ensure screenshots directory exists and mount static serving
-SCREENSHOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mobile_test_screenshots")
-try:
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-except Exception:
-    pass
-
-app.mount("/static/mobile", StaticFiles(directory=SCREENSHOTS_DIR), name="mobile_screenshots")
-
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Store active agent sessions
-active_sessions: Dict[str, Any] = {}
+# Store global agent and test results
+global_agent: Optional[Any] = None
+agent_status: str = "uninitialized"  # uninitialized, initializing, active, failed
+agent_error: Optional[str] = None
+commands_executed: int = 0
 test_results: Dict[str, Dict] = {}
-# Default shared session tracking
-DEFAULT_SESSION_ID: Optional[str] = None
-DEFAULT_SESSION_NAME = "Default Session"
+# Store external browsers to keep them alive
+external_browsers: Dict[str, Any] = {}  # Store playwright and browser instances
 
 
 class AIProvider(str, Enum):
@@ -62,22 +41,25 @@ class TestStatus(str, Enum):
     pending = "pending"
     running = "running"
     completed = "completed"
+    passed = "passed"
     failed = "failed"
     cancelled = "cancelled"
 
 
-class SessionCreateRequest(BaseModel):
-    """Request to create a new QA agent session"""
-    website_url: str = Field(default="https://www.w3schools.com/", description="Website URL to test")
-    ai_provider: AIProvider = Field(default=AIProvider.openai, description="AI provider to use")
-    auto_check: bool = Field(default=True, description="Run automatic checks on page load")
-    session_name: Optional[str] = Field(default=None, description="Custom session name")
-
-
 class CommandRequest(BaseModel):
-    """Request to execute a command in a session"""
-    session_id: str = Field(..., description="Session ID")
+    """Request to execute a command"""
     command: str = Field(..., description="Natural language command to execute")
+
+
+class NavigateRequest(BaseModel):
+    """Request to navigate to a website URL"""
+    website_url: str = Field(..., description="Website URL to navigate to")
+
+
+class CrossBrowserTestRequest(BaseModel):
+    """Request for cross-browser testing"""
+    website_url: Optional[str] = Field(default=None, description="Website URL to test (uses current URL if not provided)")
+    browser_type: Optional[str] = Field(default=None, description="Specific browser to test (chromium, firefox, webkit). If not provided, tests all.")
 
 
 class BrowserUseRequest(BaseModel):
@@ -86,35 +68,27 @@ class BrowserUseRequest(BaseModel):
     ai_provider: AIProvider = Field(default=AIProvider.google, description="AI provider (default: google)")
 
 
-class SessionResponse(BaseModel):
-    """Response after creating a session"""
-    session_id: str
-    website_url: str
-    ai_provider: str
-    status: str
-    created_at: str
-    message: str
-
-
 class CommandResponse(BaseModel):
     """Response after executing a command"""
-    session_id: str
     command: str
     result: str
     status: TestStatus
     executed_at: str
     duration_ms: Optional[float] = None
 
-# Internal helpers for default session management
-async def _ensure_default_session() -> Optional[str]:
-    """Ensure the global default session exists; create if missing. Returns session_id or None on failure."""
-    global DEFAULT_SESSION_ID
+# Internal helpers for global agent management
+async def _ensure_global_agent() -> bool:
+    """Ensure the global agent exists and is active. Returns True if agent is ready."""
+    global global_agent, agent_status, agent_error
+    
     try:
-        # If already present and not failed, keep it
-        if DEFAULT_SESSION_ID and DEFAULT_SESSION_ID in active_sessions:
-            status = active_sessions[DEFAULT_SESSION_ID].get("status")
-            if status in {"active", "initializing"}:
-                return DEFAULT_SESSION_ID
+        # If already active or initializing, return status
+        if agent_status in {"active", "initializing"}:
+            return agent_status == "active"
+        
+        # If failed, don't retry automatically
+        if agent_status == "failed":
+            return False
 
         # Lazy import to reuse existing logic
         from dotenv import load_dotenv
@@ -144,73 +118,198 @@ async def _ensure_default_session() -> Optional[str]:
         else:
             api_key = os.getenv("GOOGLE_API_KEY")
 
-        # If missing API key, register failed default session and return None
+        # If missing API key, mark as failed
         if not api_key:
-            DEFAULT_SESSION_ID = DEFAULT_SESSION_ID or str(uuid.uuid4())
-            active_sessions[DEFAULT_SESSION_ID] = {
-                "session_id": DEFAULT_SESSION_ID,
-                "session_name": DEFAULT_SESSION_NAME,
-                "agent": None,
-                "website_url": "https://www.w3schools.com/",
-                "ai_provider": provider_enum.value,
-                "status": "failed",
-                "created_at": datetime.utcnow().isoformat(),
-                "commands_executed": 0,
-                "error": f"API key for {provider_enum.value} not found in environment variables. Please add it to your .env file.",
-            }
-            return None
+            agent_status = "failed"
+            agent_error = f"API key for {provider_enum.value} not found in environment variables. Please add it to your .env file."
+            return False
 
-        # Import and construct agent
+        # Import and construct agent (lazy initialization - don't start browser session yet)
         from multi_ai_qa_agent import MultiAIQAAgent
-        session_id = str(uuid.uuid4())
-        agent = MultiAIQAAgent(ai_provider=provider_enum.value, api_key=api_key)
-        session_info = {
-            "session_id": session_id,
-            "session_name": DEFAULT_SESSION_NAME,
-            "agent": agent,
-            "website_url": "https://www.w3schools.com/",
-            "ai_provider": provider_enum.value,
-            "status": "initializing",
-            "created_at": datetime.utcnow().isoformat(),
-            "commands_executed": 0,
-        }
-        active_sessions[session_id] = session_info
-        DEFAULT_SESSION_ID = session_id
+        agent_status = "uninitialized"  # Changed from "initializing" - browser not started yet
+        global_agent = MultiAIQAAgent(ai_provider=provider_enum.value, api_key=api_key)
 
-        async def start_default():
-            try:
-                await agent.start_session(website_url=session_info["website_url"], auto_check=True)
-                active_sessions[session_id]["status"] = "active"
-            except Exception as e:
-                active_sessions[session_id]["status"] = "failed"
-                active_sessions[session_id]["error"] = str(e)
+        # Browser session will be initialized on-demand when first test runs
+        # Do NOT start browser session here - it will be started lazily when needed
 
-        # Kick off without blocking
+        return False  # Agent object created but browser session not started
+    except Exception as e:
+        agent_status = "failed"
+        agent_error = str(e)
+        return False
+
+async def _start_browser_session(website_url: str = "https://www.w3schools.com/", auto_check: bool = False):
+    """Start browser session lazily when needed (on-demand initialization)"""
+    global global_agent, agent_status, agent_error
+    
+    # If already active, return
+    if agent_status == "active":
+        return True
+    
+    # If already initializing, wait for it
+    if agent_status == "initializing":
+        # Wait up to 60 seconds for initialization
+        for _ in range(60):
+            await asyncio.sleep(1)
+            if agent_status == "active":
+                return True
+            if agent_status == "failed":
+                return False
+        return False
+    
+    # Ensure agent object exists
+    if global_agent is None:
+        await _ensure_global_agent()
+    
+    if global_agent is None:
+        return False
+    
+    # Start browser session
+    # IMPORTANT: We'll modify start_session to accept headless parameter
+    try:
+        agent_status = "initializing"
+        
+        # Start browser session in headless mode for embedding
+        # We need to directly initialize browser instead of using start_session
+        # because start_session has headless=False hardcoded
+        from playwright.async_api import async_playwright
+        print("🤖 Multi-AI QA Agent Starting (Headless for Embedding)...")
+        print("=" * 40)
+        print(f"🌐 Opening: {website_url}")
+        print(f"🧠 AI Provider: {global_agent.ai_provider.upper()}")
+        print("👁️ Browser Mode: HEADLESS (embedded)")
+        
+        global_agent.playwright = await async_playwright().start()
+        global_agent.browser = await global_agent.playwright.chromium.launch(
+            headless=True,  # Run headless - no external window
+            slow_mo=500,    # Slower interactions for stability
+            args=[
+                '--disable-web-security',
+                '--disable-features=VizDisplayCompositor',
+                '--no-sandbox',
+                '--disable-dev-shm-usage'
+            ]
+        )
+        
+        global_agent.context = await global_agent.browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            ignore_https_errors=True
+        )
+        global_agent.current_page = await global_agent.context.new_page()
+        
         try:
-            asyncio.create_task(start_default())
-        except RuntimeError:
-            # If no running loop (e.g., during startup), run once the loop is ready
-            loop = asyncio.get_event_loop()
-            loop.create_task(start_default())
+            global_agent.current_page.set_default_timeout(60000)
+            global_agent.current_page.set_default_navigation_timeout(90000)
+        except Exception:
+            pass
+        
+        # Navigate to the website
+        try:
+            await global_agent.current_page.goto(website_url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e1:
+            try:
+                await global_agent.current_page.goto(website_url, wait_until="load", timeout=60000)
+            except Exception as e2:
+                try:
+                    await global_agent.current_page.goto(website_url, wait_until="commit", timeout=30000)
+                except Exception as e3:
+                    print(f"⚠️ Navigation still timing out: {e3}. Continuing best-effort.")
+        
+        try:
+            await global_agent.current_page.wait_for_selector("body", timeout=10000)
+        except Exception:
+            pass
+        await global_agent.current_page.wait_for_timeout(2000)
+        
+        # Analyze page characteristics
+        try:
+            await global_agent._analyze_page_characteristics()
+        except Exception as e:
+            print(f"⚠️ Page analysis failed: {e}")
+        
+        # Auto-check if requested
+        if auto_check:
+            try:
+                summary = await global_agent._run_auto_checks()
+                print(summary)
+            except Exception as e:
+                print(f"⚠️ Auto-checks failed: {e}")
+        
+        global_agent.current_url = website_url
+        print("✅ Agent ready (Headless)! I can understand natural language commands.")
+        agent_status = "active"
+        agent_error = None
+        return True
+    except Exception as e:
+        agent_status = "failed"
+        agent_error = str(e)
+        return False
 
-        return session_id
-    except Exception:
-        return None
-
-def _get_default_session_or_404():
-    if not DEFAULT_SESSION_ID or DEFAULT_SESSION_ID not in active_sessions:
-        raise HTTPException(status_code=404, detail="Default session not available")
-    s = active_sessions[DEFAULT_SESSION_ID]
+def _get_agent_status():
+    """Get current agent status"""
     return {
-        "session_id": s["session_id"],
-        "session_name": s["session_name"],
-        "website_url": s["website_url"],
-        "ai_provider": s["ai_provider"],
-        "status": s["status"],
-        "created_at": s["created_at"],
-        "commands_executed": s["commands_executed"],
-        "error": s.get("error"),
+        "status": agent_status,
+        "commands_executed": commands_executed,
+        "error": agent_error,
     }
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    # Startup - DO NOT auto-initialize browser (lazy initialization)
+    # Agent object will be created on first request, browser session starts on first test
+    yield
+    # Shutdown - cleanup browser if it was started
+    global global_agent, external_browsers
+    try:
+        if global_agent:
+            if hasattr(global_agent, 'browser') and global_agent.browser:
+                await global_agent.browser.close()
+            if hasattr(global_agent, 'playwright') and global_agent.playwright:
+                await global_agent.playwright.stop()
+        # Close all external browsers
+        for browser_key, browser_info in external_browsers.items():
+            try:
+                if 'browser' in browser_info:
+                    await browser_info['browser'].close()
+                if 'playwright' in browser_info:
+                    await browser_info['playwright'].stop()
+            except Exception:
+                pass
+        external_browsers.clear()
+    except Exception:
+        pass
+
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="QA Agent API",
+    description="Backend service for multi-AI QA automation",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# Ensure screenshots directory exists and mount static serving
+SCREENSHOTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mobile_test_screenshots")
+try:
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+except Exception:
+    pass
+
+app.mount("/static/mobile", StaticFiles(directory=SCREENSHOTS_DIR), name="mobile_screenshots")
+
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 class MobileTestRequest(BaseModel):
     """Request to run a mobile responsiveness test"""
     deviceName: Optional[str] = Field(default="iPhone 17 Pro Max", description="Device name to emulate")
@@ -219,7 +318,6 @@ class MobileTestRequest(BaseModel):
 
 class MobileTestResponse(BaseModel):
     """Response for mobile test run"""
-    session_id: str
     device_name: str
     device: Dict[str, Any]
     screenshots: list
@@ -231,7 +329,6 @@ class MobileTestResponse(BaseModel):
 class TestResultResponse(BaseModel):
     """Test result details"""
     test_id: str
-    session_id: str
     command: str
     status: TestStatus
     result: str
@@ -257,180 +354,273 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "active_sessions": len(active_sessions),
+        "agent_status": agent_status,
+        "commands_executed": commands_executed,
         "total_test_results": len(test_results),
         "timestamp": datetime.utcnow().isoformat()
     }
 
 
-@app.post("/api/v1/qa-tests/sessions", response_model=SessionResponse)
-async def create_session(request: SessionCreateRequest, background_tasks: BackgroundTasks):
-    """
-    Create a new QA agent session with browser automation.
-    """
+@app.get("/api/v1/qa-tests/agent-status")
+async def get_agent_status():
+    """Get current agent status"""
+    await _ensure_global_agent()
+    return _get_agent_status()
+
+
+@app.get("/api/v1/qa-tests/browser-view")
+async def get_browser_view():
+    """Get browser view - returns screenshot for embedding in frontend"""
+    global global_agent, agent_status
+    
+    # Check if browser is active
+    if agent_status != "active":
+        return {
+            "active": False,
+            "message": f"Browser is not active. Status: {agent_status}",
+            "status": agent_status
+        }
+    
     try:
-        # Try to import MultiAIQAAgent
+        browser = getattr(global_agent, "browser", None)
+        page = getattr(global_agent, "current_page", None)
+        
+        if browser is None or page is None:
+            return {
+                "active": False,
+                "message": "Browser page not available",
+                "status": agent_status
+            }
+        
+        # Capture screenshot and return as base64
         try:
-            from multi_ai_qa_agent import MultiAIQAAgent
-        except ImportError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to import MultiAIQAAgent. Make sure multi_ai_qa_agent.py exists in the project root. Error: {str(e)}"
-            )
+            screenshot_bytes = await page.screenshot(full_page=False)
+            import base64
+            screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+            current_url = page.url
+            
+            return {
+                "active": True,
+                "page_url": current_url,
+                "screenshot": screenshot_b64,
+                "screenshot_data_url": f"data:image/png;base64,{screenshot_b64}",
+                "message": "Browser is active and ready",
+                "status": agent_status,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        except Exception as screenshot_error:
+            return {
+                "active": True,
+                "page_url": page.url if page else None,
+                "screenshot": None,
+                "message": f"Screenshot failed: {str(screenshot_error)}",
+                "status": agent_status
+            }
+    except Exception as e:
+        return {
+            "active": False,
+            "message": f"Error getting browser view: {str(e)}",
+            "status": agent_status
+        }
 
-        # If creating the default session by name and it exists, return it
-        if (request.session_name or "").strip() == DEFAULT_SESSION_NAME and DEFAULT_SESSION_ID and DEFAULT_SESSION_ID in active_sessions:
-            s = active_sessions[DEFAULT_SESSION_ID]
-            return SessionResponse(
-                session_id=s["session_id"],
-                website_url=s["website_url"],
-                ai_provider=s["ai_provider"],
-                status=s["status"],
-                created_at=s["created_at"],
-                message=f"Session '{s['session_name']}' already active"
-            )
 
-        # Generate session ID
-        session_id = str(uuid.uuid4())
-        session_name = request.session_name or f"Session-{session_id[:8]}"
-
-        # Get API key from environment
-        from dotenv import load_dotenv
-        load_dotenv()
-
-        api_key = None
-        if request.ai_provider == AIProvider.openai:
-            api_key = os.getenv("OPENAI_API_KEY")
-        elif request.ai_provider == AIProvider.anthropic:
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-        elif request.ai_provider == AIProvider.google:
-            api_key = os.getenv("GOOGLE_API_KEY")
-
-        if not api_key:
+@app.post("/api/v1/qa-tests/navigate")
+async def navigate_to_url(request: NavigateRequest):
+    """Navigate to a website URL"""
+    # Ensure agent object exists (may be uninitialized)
+    await _ensure_global_agent()
+    
+    # Lazy initialize browser session if not already active
+    if agent_status not in {"active", "initializing"}:
+        # Start browser session with the requested URL (no auto_check)
+        if not await _start_browser_session(website_url=request.website_url.strip(), auto_check=False):
+            if agent_status == "failed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Browser initialization failed. Status: {agent_status}. Error: {agent_error or 'Unknown error'}"
+                )
             raise HTTPException(
                 status_code=400,
-                detail=f"API key for {request.ai_provider} not found in environment variables. Please add it to your .env file."
+                detail=f"Browser is not ready. Status: {agent_status}. Please wait for initialization."
             )
-
-        # Initialize the agent
-        agent = MultiAIQAAgent(
-            ai_provider=request.ai_provider.value,
-            api_key=api_key
-        )
-
-        # Store session info
-        session_info = {
-            "session_id": session_id,
-            "session_name": session_name,
-            "agent": agent,
-            "website_url": request.website_url,
-            "ai_provider": request.ai_provider.value,
-            "status": "initializing",
-            "created_at": datetime.utcnow().isoformat(),
-            "commands_executed": 0
-        }
-        active_sessions[session_id] = session_info
-
-        # Start session in background
-        async def start_agent_session():
-            try:
-                await agent.start_session(
-                    website_url=request.website_url,
-                    auto_check=request.auto_check
+    
+    # If still initializing, wait for it
+    if agent_status == "initializing":
+        for _ in range(60):
+            await asyncio.sleep(1)
+            if agent_status == "active":
+                break
+            if agent_status == "failed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Browser initialization failed. Error: {agent_error or 'Unknown error'}"
                 )
-                active_sessions[session_id]["status"] = "active"
-            except Exception as e:
-                active_sessions[session_id]["status"] = "failed"
-                active_sessions[session_id]["error"] = str(e)
-
-        background_tasks.add_task(start_agent_session)
-
-        return SessionResponse(
-            session_id=session_id,
-            website_url=request.website_url,
-            ai_provider=request.ai_provider.value,
-            status="initializing",
-            created_at=session_info["created_at"],
-            message=f"Session '{session_name}' created successfully. Initializing browser..."
+    
+    if agent_status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Browser is not ready. Status: {agent_status}. Please wait for initialization."
         )
+
+    try:
+        # Get the current page from the agent
+        page = getattr(global_agent, "current_page", None)
+        if page is None:
+            raise HTTPException(status_code=400, detail="No active page available")
+
+        # Navigate to the new URL
+        website_url = request.website_url.strip()
+        if not website_url.startswith(('http://', 'https://')):
+            website_url = f'https://{website_url}'
+
+        try:
+            await page.goto(website_url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e1:
+            try:
+                await page.goto(website_url, wait_until="load", timeout=60000)
+            except Exception as e2:
+                try:
+                    await page.goto(website_url, wait_until="commit", timeout=30000)
+                except Exception as e3:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to navigate to {website_url}: {str(e3)}"
+                    )
+
+        # Wait for page to be ready
+        try:
+            await page.wait_for_selector("body", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2000)
+
+        # Verify navigation succeeded by checking actual page URL
+        actual_url = page.url
+        if not actual_url.startswith(website_url.split('?')[0]) and not actual_url.startswith(website_url.replace('https://', 'http://').split('?')[0]):
+            # Check if it's a redirect - normalize both URLs for comparison
+            normalized_target = website_url.rstrip('/').split('?')[0].split('#')[0]
+            normalized_actual = actual_url.rstrip('/').split('?')[0].split('#')[0]
+            if normalized_actual != normalized_target and not normalized_actual.startswith(normalized_target):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Navigation verification failed: expected {website_url} but page is at {actual_url}"
+                )
+
+        # Update agent's current URL
+        global_agent.current_url = website_url
+
+        # Run page analysis after navigation (similar to start_session)
+        # This helps the agent understand the new page
+        try:
+            if hasattr(global_agent, '_analyze_page_characteristics'):
+                await global_agent._analyze_page_characteristics()
+        except Exception as e:
+            # Log but don't fail - page analysis is optional
+            print(f"⚠️ Page analysis after navigation failed: {e}")
+
+        return {
+            "message": f"Successfully navigated to {website_url}",
+            "website_url": website_url,
+            "actual_url": actual_url,
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Navigation failed: {str(e)}")
 
 
-@app.get("/api/v1/qa-tests/sessions/{session_id}")
-async def get_session(session_id: str):
-    """Get details about a specific session"""
-    if session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
-    session = active_sessions[session_id]
-    return {
-        "session_id": session["session_id"],
-        "session_name": session["session_name"],
-        "website_url": session["website_url"],
-        "ai_provider": session["ai_provider"],
-        "status": session["status"],
-        "created_at": session["created_at"],
-        "commands_executed": session["commands_executed"],
-        "error": session.get("error")
-    }
-
-
-@app.get("/api/v1/qa-tests/sessions")
-async def list_sessions():
-    """List all active sessions"""
-    return {
-        "sessions": [
-            {
-                "session_id": s["session_id"],
-                "session_name": s["session_name"],
-                "website_url": s["website_url"],
-                "ai_provider": s["ai_provider"],
-                "status": s["status"],
-                "created_at": s["created_at"],
-                "commands_executed": s["commands_executed"]
-            }
-            for s in active_sessions.values()
-        ],
-        "total": len(active_sessions)
-    }
-
-
-@app.post("/api/v1/qa-tests/sessions/{session_id}/commands", response_model=CommandResponse)
-async def execute_command(session_id: str, request: CommandRequest):
-    """Execute a natural language command in an active session"""
-    if session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
-    session = active_sessions[session_id]
-
-    if session["status"] != "active":
+@app.post("/api/v1/qa-tests/commands", response_model=CommandResponse)
+async def execute_command(request: CommandRequest):
+    """Execute a natural language command"""
+    global commands_executed
+    
+    # Ensure agent object exists (may be uninitialized)
+    await _ensure_global_agent()
+    
+    # Lazy initialize browser session if not already active
+    if agent_status not in {"active", "initializing"}:
+        # Start browser session with default URL (will navigate to user's URL later)
+        if not await _start_browser_session(website_url="https://www.w3schools.com/", auto_check=False):
+            if agent_status == "failed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Browser initialization failed. Status: {agent_status}. Error: {agent_error or 'Unknown error'}"
+                )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Browser is not ready. Status: {agent_status}. Please wait for initialization."
+            )
+    
+    # If still initializing, wait for it
+    if agent_status == "initializing":
+        # Wait up to 60 seconds for initialization
+        for _ in range(60):
+            await asyncio.sleep(1)
+            if agent_status == "active":
+                break
+            if agent_status == "failed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Browser initialization failed. Error: {agent_error or 'Unknown error'}"
+                )
+    
+    # Final check
+    if agent_status != "active":
         raise HTTPException(
             status_code=400,
-            detail=f"Session is not active. Current status: {session['status']}"
+            detail=f"Browser is not ready. Status: {agent_status}. Please wait for initialization."
         )
 
     try:
-        agent = session["agent"]
         start_time = datetime.utcnow()
 
+        # For auto check and auto audit commands, add scrolling behavior before execution
+        command_lower = request.command.lower().strip()
+        if command_lower == 'auto check' or command_lower == 'auto audit':
+            try:
+                page = getattr(global_agent, "current_page", None)
+                if page:
+                    # Scroll to top first
+                    await page.evaluate("window.scrollTo(0, 0)")
+                    await asyncio.sleep(0.5)
+                    
+                    # Get page height
+                    page_height = await page.evaluate("document.body.scrollHeight || document.documentElement.scrollHeight")
+                    viewport_height = await page.evaluate("window.innerHeight")
+                    
+                    # Scroll from top to bottom smoothly
+                    scroll_step = viewport_height // 2
+                    scroll_position = 0
+                    
+                    while scroll_position < page_height:
+                        await page.evaluate(f"window.scrollTo(0, {scroll_position})")
+                        await asyncio.sleep(0.2)  # Smooth scrolling
+                        scroll_position += scroll_step
+                    
+                    # Scroll to bottom and stay there
+                    await page.evaluate(f"window.scrollTo(0, {page_height})")
+                    await asyncio.sleep(1)
+                    
+                    # Keep at bottom for a moment before executing command
+                    await asyncio.sleep(0.5)
+            except Exception as scroll_error:
+                print(f"⚠️ Scrolling during {command_lower} failed: {scroll_error}")
+
         # Execute the command
-        result = await agent.process_command(request.command)
+        result = await global_agent.process_command(request.command)
 
         end_time = datetime.utcnow()
         duration_ms = (end_time - start_time).total_seconds() * 1000
 
-        # Update session stats
-        session["commands_executed"] += 1
+        # Update stats
+        commands_executed += 1
 
         # Store test result
         test_id = str(uuid.uuid4())
         test_results[test_id] = {
             "test_id": test_id,
-            "session_id": session_id,
             "command": request.command,
             "result": result,
             "status": TestStatus.completed,
@@ -440,7 +630,6 @@ async def execute_command(session_id: str, request: CommandRequest):
         }
 
         return CommandResponse(
-            session_id=session_id,
             command=request.command,
             result=result,
             status=TestStatus.completed,
@@ -452,91 +641,304 @@ async def execute_command(session_id: str, request: CommandRequest):
         raise HTTPException(status_code=500, detail=f"Command execution failed: {str(e)}")
 
 
-@app.delete("/api/v1/qa-tests/sessions/{session_id}")
-async def close_session(session_id: str):
-    """Close and cleanup a session"""
-    if session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
-    session = active_sessions[session_id]
-
+@app.post("/api/v1/qa-tests/open-browser-external")
+async def open_browser_external(request: CrossBrowserTestRequest):
+    """Open a browser externally in headful mode with full UI"""
+    global global_agent, external_browsers
+    
+    # Ensure agent object exists
+    await _ensure_global_agent()
+    
+    # Use the provided URL or current URL from agent
+    test_url = request.website_url or getattr(global_agent, "current_url", None) or "https://www.w3schools.com/"
+    
+    # Get browser type from request
+    browser_type = getattr(request, 'browser_type', 'chromium')
+    
+    if browser_type not in ['chromium', 'firefox', 'webkit']:
+        raise HTTPException(status_code=400, detail="Invalid browser type. Use: chromium, firefox, or webkit")
+    
     try:
-        # Close the agent's browser
-        agent = session["agent"]
-        if hasattr(agent, 'browser') and agent.browser:
-            await agent.browser.close()
-        if hasattr(agent, 'playwright') and agent.playwright:
-            await agent.playwright.stop()
-
-        # Remove from active sessions
-        del active_sessions[session_id]
-
-        # Cleanup temporary screenshots for this session
+        from playwright.async_api import async_playwright
+        
+        # Close existing browser of this type if it exists
+        browser_key = f"{browser_type}_external"
+        if browser_key in external_browsers:
+            try:
+                existing = external_browsers[browser_key]
+                if 'browser' in existing:
+                    await existing['browser'].close()
+                if 'playwright' in existing:
+                    await existing['playwright'].stop()
+            except Exception:
+                pass  # Ignore errors closing old browser
+            del external_browsers[browser_key]
+        
+        # Launch browser in headful mode (visible, with full UI)
+        playwright = await async_playwright().start()
+        
+        if browser_type == 'chromium':
+            browser = await playwright.chromium.launch(
+                headless=False,  # Show full browser UI
+                slow_mo=500,
+                args=['--start-maximized']  # Maximize window
+            )
+        elif browser_type == 'firefox':
+            browser = await playwright.firefox.launch(
+                headless=False,  # Show full browser UI
+                slow_mo=500
+            )
+        elif browser_type == 'webkit':
+            browser = await playwright.webkit.launch(
+                headless=False,  # Show full browser UI
+                slow_mo=500
+            )
+        
+        # Create context and page
+        context = await browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            ignore_https_errors=True
+        )
+        page = await context.new_page()
+        
+        # Navigate to URL
         try:
-            import shutil
-            session_dir = os.path.join(SCREENSHOTS_DIR, session_id)
-            if os.path.isdir(session_dir):
-                shutil.rmtree(session_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-        return {
-            "message": f"Session {session_id} closed successfully",
-            "session_id": session_id
+            await page.goto(test_url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e1:
+            try:
+                await page.goto(test_url, wait_until="load", timeout=60000)
+            except Exception as e2:
+                await page.goto(test_url, wait_until="commit", timeout=30000)
+        
+        await page.wait_for_timeout(1000)
+        
+        # Store browser instances to keep them alive
+        external_browsers[browser_key] = {
+            'playwright': playwright,
+            'browser': browser,
+            'context': context,
+            'page': page,
+            'browser_type': browser_type,
+            'url': test_url,
+            'opened_at': datetime.utcnow().isoformat()
         }
-
+        
+        return {
+            "message": f"Opened {browser_type} externally",
+            "browser_type": browser_type,
+            "url": test_url,
+            "status": "opened",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to close session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to open browser externally: {str(e)}")
 
 
-@app.get("/api/v1/qa-tests/session-default")
-async def get_default_session():
-    """Return the default shared session, creating it if missing."""
-    # Ensure exists (best effort)
-    await _ensure_default_session()
-    return _get_default_session_or_404()
-
-
-@app.on_event("startup")
-async def _startup_default_session():
-    # Fire-and-forget creation of default session
-    await _ensure_default_session()
-
-
-@app.on_event("shutdown")
-async def _shutdown_cleanup():
-    # Close default session if present
+@app.post("/api/v1/qa-tests/cross-browser-test")
+async def run_cross_browser_test(request: CrossBrowserTestRequest):
+    """Run cross-browser test - can test all browsers or a specific one"""
+    global global_agent, agent_status, commands_executed, test_results
+    
+    # Ensure agent object exists (may be uninitialized)
+    await _ensure_global_agent()
+    
+    # Use the provided URL or current URL from agent
+    test_url = request.website_url or getattr(global_agent, "current_url", None) or "https://www.w3schools.com/"
+    
+    # Get browser type from request if provided
+    browser_type = getattr(request, 'browser_type', None)
+    
+    start_time = datetime.utcnow()
+    
     try:
-        if DEFAULT_SESSION_ID and DEFAULT_SESSION_ID in active_sessions:
-            s = active_sessions[DEFAULT_SESSION_ID]
-            agent = s.get("agent")
-            if agent:
-                if hasattr(agent, 'browser') and agent.browser:
-                    await agent.browser.close()
-                if hasattr(agent, 'playwright') and agent.playwright:
-                    await agent.playwright.stop()
-    except Exception:
-        pass
+        from playwright.async_api import async_playwright
+        
+        # If specific browser requested, test only that one
+        if browser_type and browser_type in ['chromium', 'firefox', 'webkit']:
+            browsers_to_test = [browser_type]
+        else:
+            browsers_to_test = ['chromium', 'firefox', 'webkit']
+        
+        results = {}
+        
+        for browser_type in browsers_to_test:
+            try:
+                print(f"🌐 Testing on {browser_type}...")
+                
+                # Launch browser in headless mode (for embedding)
+                playwright = await async_playwright().start()
+                
+                if browser_type == 'chromium':
+                    browser = await playwright.chromium.launch(headless=True, slow_mo=500)
+                elif browser_type == 'firefox':
+                    browser = await playwright.firefox.launch(headless=True, slow_mo=500)
+                elif browser_type == 'webkit':
+                    browser = await playwright.webkit.launch(headless=True, slow_mo=500)
+                else:
+                    results[browser_type] = {"status": "failed", "error": f"Unknown browser: {browser_type}"}
+                    continue
+                
+                # Create context and page
+                context = await browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    ignore_https_errors=True
+                )
+                page = await context.new_page()
+                
+                # Navigate to URL
+                try:
+                    await page.goto(test_url, wait_until="domcontentloaded", timeout=45000)
+                except Exception as e1:
+                    try:
+                        await page.goto(test_url, wait_until="load", timeout=60000)
+                    except Exception as e2:
+                        await page.goto(test_url, wait_until="commit", timeout=30000)
+                
+                await page.wait_for_timeout(2000)
+                
+                # Get page info
+                title = await page.title()
+                url = page.url
+                
+                # Take screenshot
+                screenshot_bytes = await page.screenshot(full_page=False)
+                import base64
+                screenshot_b64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+                
+                # Close browser
+                await browser.close()
+                await playwright.stop()
+                
+                results[browser_type] = {
+                    "status": "success",
+                    "title": title,
+                    "url": url,
+                    "screenshot": f"data:image/png;base64,{screenshot_b64}"
+                }
+                
+            except Exception as e:
+                results[browser_type] = {
+                    "status": "failed",
+                    "error": str(e)
+                }
+        
+        end_time = datetime.utcnow()
+        duration_ms = (end_time - start_time).total_seconds() * 1000
+        
+        # Determine overall test status
+        success_count = len([r for r in results.values() if r.get("status") == "success"])
+        total_count = len(browsers_to_test)
+        
+        if success_count == total_count:
+            overall_status = TestStatus.passed
+        elif success_count > 0:
+            overall_status = TestStatus.completed
+        else:
+            overall_status = TestStatus.failed
+        
+        # Update stats
+        commands_executed += 1
+        
+        # Store test result for dashboard
+        test_id = str(uuid.uuid4())
+        
+        # Format result text
+        result_lines = [f"🌐 Cross-Browser Test Results for {test_url}:"]
+        for browser_name, browser_result in results.items():
+            if browser_result.get("status") == "success":
+                result_lines.append(f"   ✅ {browser_name.capitalize()}: Success - {browser_result.get('title', 'N/A')}")
+            else:
+                result_lines.append(f"   ❌ {browser_name.capitalize()}: Failed - {browser_result.get('error', 'Unknown error')}")
+        
+        result_text = "\n".join(result_lines)
+        
+        test_results[test_id] = {
+            "test_id": test_id,
+            "command": f"cross-browser test ({', '.join(browsers_to_test)})",
+            "result": result_text,
+            "status": overall_status,
+            "started_at": start_time.isoformat(),
+            "completed_at": end_time.isoformat(),
+            "duration_ms": duration_ms,
+            "executed_at": end_time.isoformat()
+        }
+        
+        return {
+            "test_url": test_url,
+            "browsers": results,
+            "total_browsers": len(browsers_to_test),
+            "completed": success_count,
+            "test_id": test_id,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        # Still record the test as failed
+        end_time = datetime.utcnow()
+        duration_ms = (end_time - start_time).total_seconds() * 1000
+        commands_executed += 1
+        
+        test_id = str(uuid.uuid4())
+        test_results[test_id] = {
+            "test_id": test_id,
+            "command": f"cross-browser test ({', '.join(browsers_to_test) if 'browsers_to_test' in locals() else 'all browsers'})",
+            "result": f"Cross-browser test failed: {str(e)}",
+            "status": TestStatus.failed,
+            "started_at": start_time.isoformat(),
+            "completed_at": end_time.isoformat(),
+            "duration_ms": duration_ms,
+            "executed_at": end_time.isoformat(),
+            "error": str(e)
+        }
+        
+        raise HTTPException(status_code=500, detail=f"Cross-browser test failed: {str(e)}")
 
 
-@app.post("/api/v1/qa-tests/sessions/{session_id}/mobile-test", response_model=MobileTestResponse)
-async def run_mobile_test(session_id: str, request: MobileTestRequest, http_request: Request):
+@app.post("/api/v1/qa-tests/mobile-test", response_model=MobileTestResponse)
+async def run_mobile_test(request: MobileTestRequest, http_request: Request):
     """Run a non-interactive mobile test and return screenshot URLs."""
-    if session_id not in active_sessions:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
-    session = active_sessions[session_id]
-    if session["status"] != "active":
-        raise HTTPException(status_code=400, detail=f"Session is not active. Current status: {session['status']}")
+    # Ensure agent object exists (may be uninitialized)
+    await _ensure_global_agent()
+    
+    # Lazy initialize browser session if not already active
+    if agent_status not in {"active", "initializing"}:
+        # Start browser session with default URL (will navigate to user's URL later)
+        if not await _start_browser_session(website_url="https://www.w3schools.com/", auto_check=False):
+            if agent_status == "failed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Browser initialization failed. Status: {agent_status}. Error: {agent_error or 'Unknown error'}"
+                )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Browser is not ready. Status: {agent_status}. Please wait for initialization."
+            )
+    
+    # If still initializing, wait for it
+    if agent_status == "initializing":
+        for _ in range(60):
+            await asyncio.sleep(1)
+            if agent_status == "active":
+                break
+            if agent_status == "failed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Browser initialization failed. Error: {agent_error or 'Unknown error'}"
+                )
+    
+    if agent_status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Browser is not ready. Status: {agent_status}. Please wait for initialization."
+        )
 
     try:
-        from datetime import datetime
-        import uuid
         started_at = datetime.utcnow()
-        agent = session["agent"]
-        page = getattr(agent, "current_page", None)
+        test_id = str(uuid.uuid4())
+        page = getattr(global_agent, "current_page", None)
         if page is None:
-            raise HTTPException(status_code=400, detail="No active page in session. Wait for initialization to complete.")
+            raise HTTPException(status_code=400, detail="No active page available. Wait for initialization to complete.")
 
         # Resolve device config from agent's MobileDeviceManager or custom
         device_name = request.deviceName or "iPhone 17 Pro Max"
@@ -551,7 +953,7 @@ async def run_mobile_test(session_id: str, request: MobileTestRequest, http_requ
             device_cfg = {"width": width, "height": height, "deviceScaleFactor": scale}
             device_name = request.custom.get("name") or f"Custom {width}x{height}"
         else:
-            devices = getattr(agent.mobile_device_manager, "devices", {})
+            devices = getattr(global_agent.mobile_device_manager, "devices", {})
             device_cfg = devices.get(device_name)
             if not device_cfg:
                 raise HTTPException(status_code=400, detail=f"Unknown device: {device_name}")
@@ -588,10 +990,10 @@ async def run_mobile_test(session_id: str, request: MobileTestRequest, http_requ
         overlap_fraction = max(0.0, min(0.3, overlap_fraction))
         step = max(1, int(viewport_h * (1.0 - overlap_fraction)))
 
-        # Namespace files in a per-session directory
-        session_dir = os.path.join(SCREENSHOTS_DIR, session_id)
+        # Namespace files in a per-test directory
+        test_dir = os.path.join(SCREENSHOTS_DIR, test_id)
         try:
-            os.makedirs(session_dir, exist_ok=True)
+            os.makedirs(test_dir, exist_ok=True)
         except Exception:
             pass
 
@@ -602,10 +1004,10 @@ async def run_mobile_test(session_id: str, request: MobileTestRequest, http_requ
 
             count += 1
             filename = f"{device_name.replace(' ', '_')}_{count}.png"
-            filepath = os.path.join(session_dir, filename)
+            filepath = os.path.join(test_dir, filename)
             try:
                 await page.screenshot(path=filepath)
-                rel = f"/static/mobile/{session_id}/{filename}"
+                rel = f"/static/mobile/{test_id}/{filename}"
                 base = str(http_request.base_url).rstrip('/')
                 screenshot_urls.append(f"{base}{rel}")
             except Exception:
@@ -626,12 +1028,10 @@ async def run_mobile_test(session_id: str, request: MobileTestRequest, http_requ
 
         # Persist test result for Test Results page
         try:
-            test_id = str(uuid.uuid4())
             completed_at = datetime.utcnow()
             duration_ms = (completed_at - started_at).total_seconds() * 1000
             test_results[test_id] = {
                 "test_id": test_id,
-                "session_id": session_id,
                 "command": "mobile test",
                 "status": TestStatus.completed,
                 "result": f"Captured {len(screenshot_urls)} screenshots on {device_name} ({device_cfg.get('width')}x{device_cfg.get('height')})",
@@ -650,7 +1050,6 @@ async def run_mobile_test(session_id: str, request: MobileTestRequest, http_requ
             pass
 
         return MobileTestResponse(
-            session_id=session_id,
             device_name=device_name,
             device={
                 "name": device_name,
@@ -675,6 +1074,9 @@ async def execute_browser_use(request: BrowserUseRequest):
     Execute a simple browser automation task using browser-use library.
     Returns structured output of agent execution history.
     """
+    started_at = datetime.utcnow()
+    test_id = str(uuid.uuid4())
+    
     try:
         # Import browser_use components
         try:
@@ -713,16 +1115,80 @@ async def execute_browser_use(request: BrowserUseRequest):
         # Create terminal-style output (simple version that doesn't need schemas)
         terminal_output = format_terminal_output_simple(history, request.task)
 
+        # Determine test status by parsing terminal output
+        # Use regex patterns similar to frontend logic for more robust matching
+        import re
+        terminal_text = terminal_output
+        
+        # Check for explicit PASSED/FAILED markers using regex (case-insensitive)
+        passed_patterns = [
+            r'(?:\n|^)\s*✓\s*TEST\s+CASE\s+STATUS:\s*PASSED',
+            r'(?:\n|^)\s*TEST\s+CASE:\s*PASSED',
+            r'test\s+case\s+is\s*\*\*passed\*\*',
+            r'Test\s+case\s+is\s+PASSED',
+            r'test\s+case\s+status:\s*passed',
+            r'test\s+case:\s*passed',
+        ]
+        failed_patterns = [
+            r'(?:\n|^)\s*✗\s*TEST\s+CASE\s+STATUS:\s*FAILED',
+            r'(?:\n|^)\s*TEST\s+CASE:\s*FAILED',
+            r'test\s+case\s+is\s*\*\*failed\*\*',
+            r'Test\s+case\s+is\s+FAILED',
+            r'test\s+case\s+status:\s*failed',
+            r'test\s+case:\s*failed',
+            r'Conclusion:\s*Test\s+case\s+failed',  # Catch conclusion patterns
+            r'Conclusion:.*[Tt]est\s+case\s+failed',  # Catch variations
+        ]
+        
+        passed_marker = any(re.search(pattern, terminal_text, re.IGNORECASE | re.MULTILINE) for pattern in passed_patterns)
+        failed_marker = any(re.search(pattern, terminal_text, re.IGNORECASE | re.MULTILINE) for pattern in failed_patterns)
+        
+        # Determine status
+        if passed_marker and not failed_marker:
+            test_status = TestStatus.passed
+        elif failed_marker:
+            test_status = TestStatus.failed
+        else:
+            test_status = TestStatus.completed
+
+        completed_at = datetime.utcnow()
+        duration_ms = (completed_at - started_at).total_seconds() * 1000
+
+        # Store test result
+        test_results[test_id] = {
+            "test_id": test_id,
+            "command": request.task,
+            "status": test_status.value,
+            "result": terminal_output,
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "duration_ms": duration_ms
+        }
+
         return {
             "task": request.task,
-            "status": "completed",
+            "status": test_status.value,
             "terminal_output": terminal_output,  # Terminal-style formatted output
-            "executed_at": datetime.utcnow().isoformat()
+            "executed_at": completed_at.isoformat(),
+            "test_id": test_id
         }
 
     except HTTPException:
         raise
     except Exception as e:
+        # Store failed test result
+        completed_at = datetime.utcnow()
+        duration_ms = (completed_at - started_at).total_seconds() * 1000
+        test_results[test_id] = {
+            "test_id": test_id,
+            "command": request.task,
+            "status": TestStatus.failed.value,
+            "result": f"Browser automation failed: {str(e)}",
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "duration_ms": duration_ms,
+            "error": str(e)
+        }
         raise HTTPException(status_code=500, detail=f"Browser automation failed: {str(e)}")
 
 
@@ -736,20 +1202,16 @@ async def get_test_result(test_id: str):
 
 
 @app.get("/api/v1/qa-tests/test-results")
-async def list_test_results(session_id: Optional[str] = None, limit: int = 50):
-    """List test results, optionally filtered by session"""
+async def list_test_results(limit: int = 50):
+    """List test results"""
     results = list(test_results.values())
-
-    if session_id:
-        results = [r for r in results if r["session_id"] == session_id]
 
     # Sort by most recent first
     results.sort(key=lambda x: x["started_at"], reverse=True)
 
     return {
         "results": results[:limit],
-        "total": len(results),
-        "filtered_by_session": session_id
+        "total": len(results)
     }
 
 

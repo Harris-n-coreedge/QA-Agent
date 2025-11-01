@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Activity, TestTube, CheckCircle, XCircle, Clock } from 'lucide-react'
-import { sessionsAPI, testResultsAPI, healthAPI } from '../api/client'
+import { agentAPI, testResultsAPI, healthAPI } from '../api/client'
 
 function StatCard({ title, value, icon: Icon, color = 'primary' }) {
   const colors = {
@@ -43,7 +43,8 @@ function StatCard({ title, value, icon: Icon, color = 'primary' }) {
 
 function RecentTest({ test }) {
   const statusColors = {
-    completed: 'badge-success',
+    passed: 'badge-success',
+    completed: 'badge-warning',
     running: 'badge-info',
     failed: 'badge-error',
     pending: 'badge-warning',
@@ -78,29 +79,26 @@ function Dashboard() {
     refetchInterval: 5000,
   })
 
-  const { data: sessions, isLoading: sessionsLoading } = useQuery({
-    queryKey: ['sessions'],
-    queryFn: sessionsAPI.list,
+  const { data: agentStatus } = useQuery({
+    queryKey: ['agent-status'],
+    queryFn: agentAPI.getStatus,
     refetchInterval: 3000,
   })
 
+  // Fetch all results for accurate counts, but limit display to recent 10
   const { data: testResults, isLoading: resultsLoading } = useQuery({
     queryKey: ['test-results'],
-    queryFn: () => testResultsAPI.list(null, 10),
+    queryFn: () => testResultsAPI.list(1000), // Fetch a large number to get accurate counts
     refetchInterval: 3000,
   })
 
-  const { data: defaultSession } = useQuery({
-    queryKey: ['default-session'],
-    queryFn: () => sessionsAPI.sessionDefault(),
-    retry: 0,
-    refetchInterval: 5000,
-  })
-
-  const activeSessions = sessions?.sessions?.filter(s => s.status === 'active').length || 0
   const totalTests = testResults?.total || 0
-  const completedTests = testResults?.results?.filter(r => r.status === 'completed').length || 0
+  const passedTests = testResults?.results?.filter(r => r.status === 'passed').length || 0
+  const completedTests = testResults?.results?.filter(r => r.status === 'completed' || r.status === 'passed' || r.status === 'failed').length || 0
   const failedTests = testResults?.results?.filter(r => r.status === 'failed').length || 0
+  
+  // Limit to 10 most recent for display
+  const recentTests = testResults?.results?.slice(0, 10) || []
 
   return (
     <div className="space-y-16 fade-in">
@@ -111,22 +109,18 @@ function Dashboard() {
         <p className="text-white/80 text-2xl font-medium tracking-wide">
           Monitor your QA automation in real-time
         </p>
-        {defaultSession && (
+        {agentStatus && (
           <div className="mt-6 inline-flex items-center space-x-4 px-6 py-3 rounded-2xl border border-white/20 bg-white/10 text-white/90">
-            <span className="font-bold">Default Session:</span>
-            <span className="font-mono">{defaultSession.session_name}</span>
-            <span className="badge badge-info">{defaultSession.status}</span>
+            <span className="font-bold">Agent Status:</span>
+            <span className="badge badge-info">{agentStatus.status}</span>
+            {agentStatus.commands_executed > 0 && (
+              <span className="text-sm">({agentStatus.commands_executed} commands executed)</span>
+            )}
           </div>
         )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
-        <StatCard
-          title="Active Sessions"
-          value={activeSessions}
-          icon={Activity}
-          color="primary"
-        />
         <StatCard
           title="Total Tests"
           value={totalTests}
@@ -134,10 +128,16 @@ function Dashboard() {
           color="primary"
         />
         <StatCard
-          title="Completed"
-          value={completedTests}
+          title="Passed"
+          value={passedTests}
           icon={CheckCircle}
           color="success"
+        />
+        <StatCard
+          title="Completed"
+          value={completedTests}
+          icon={Clock}
+          color="warning"
         />
         <StatCard
           title="Failed"
@@ -147,49 +147,7 @@ function Dashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-        <div className="card hover-lift">
-          <h2 className="text-4xl font-bold text-gradient text-glow mb-10">
-            Active Sessions
-          </h2>
-          <div className="space-y-6">
-            {sessionsLoading ? (
-              <div className="space-y-6">
-                <div className="skeleton h-32 rounded-2xl"></div>
-                <div className="skeleton h-32 rounded-2xl"></div>
-              </div>
-            ) : sessions?.sessions?.length > 0 ? (
-              sessions.sessions.map((session, idx) => (
-                <div
-                  key={session.session_id}
-                  style={{ animationDelay: `${idx * 0.15}s` }}
-                  className="bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-2xl p-8 rounded-3xl hover:from-white/15 hover:to-white/10 transition-all duration-700 transform hover:scale-[1.03] hover:-translate-y-2 border border-white/15 hover:border-white/25 fade-in shadow-xl hover:shadow-2xl"
-                >
-                  <div className="flex items-start justify-between mb-6">
-                    <div>
-                      <p className="text-white font-bold text-xl mb-2">{session.session_name}</p>
-                      <p className="text-sm text-white/70 font-medium">{session.website_url}</p>
-                    </div>
-                    <span className={`badge ${
-                      session.status === 'active' ? 'badge-success' :
-                      session.status === 'initializing' ? 'badge-info' :
-                      'badge-warning'
-                    }`}>
-                      {session.status}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-white/70 font-medium">
-                    <span>Provider: {session.ai_provider}</span>
-                    <span>Commands: {session.commands_executed}</span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-white/70 text-center py-16 text-xl font-medium">No active sessions</p>
-            )}
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 lg:grid-cols-1 gap-12">
         <div className="card hover-lift">
           <h2 className="text-4xl font-bold text-gradient text-glow mb-10">
             Recent Tests
@@ -201,8 +159,8 @@ function Dashboard() {
                 <div className="skeleton h-28 rounded-2xl"></div>
                 <div className="skeleton h-28 rounded-2xl"></div>
               </div>
-            ) : testResults?.results?.length > 0 ? (
-              testResults.results.map((test, idx) => (
+            ) : recentTests.length > 0 ? (
+              recentTests.map((test, idx) => (
                 <div key={test.test_id} style={{ animationDelay: `${idx * 0.15}s` }} className="fade-in">
                   <RecentTest test={test} />
                 </div>
@@ -219,16 +177,12 @@ function Dashboard() {
           <h2 className="text-4xl font-bold text-gradient text-glow mb-10">
             System Health
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-8 text-center">
             <div className="bg-gradient-to-br from-green-500/25 to-emerald-500/15 p-8 rounded-3xl border border-green-500/40 hover:scale-110 transition-all duration-700 cursor-pointer backdrop-blur-2xl shadow-2xl hover:shadow-green-500/30">
               <p className="text-5xl font-black text-gradient text-glow mb-4">
                 {health.status}
               </p>
               <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Status</p>
-            </div>
-            <div className="bg-gradient-to-br from-white/15 to-white/10 p-8 rounded-3xl border border-white/25 hover:scale-110 transition-all duration-700 cursor-pointer backdrop-blur-2xl shadow-2xl hover:shadow-white/20">
-              <p className="text-5xl font-black text-white mb-4">{health.active_sessions}</p>
-              <p className="text-sm text-white/70 font-bold tracking-wide uppercase">Active Sessions</p>
             </div>
             <div className="bg-gradient-to-br from-white/15 to-white/10 p-8 rounded-3xl border border-white/25 hover:scale-110 transition-all duration-700 cursor-pointer backdrop-blur-2xl shadow-2xl hover:shadow-white/20">
               <p className="text-5xl font-black text-white mb-4">{health.total_test_results}</p>
