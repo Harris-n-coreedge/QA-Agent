@@ -1,12 +1,18 @@
-import { useState } from 'react'
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom'
-import { Activity, TestTube, Zap, BarChart3, Settings } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom'
+import { Activity, TestTube, Zap, BarChart3, Settings as SettingsIcon, Menu, X, Bell, User, Search, LogOut, LogIn, Command } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import BrowserUse from './pages/BrowserUse'
 import TestResults from './pages/TestResults'
 import QuickTest from './pages/QuickTest'
+import SignIn from './pages/SignIn'
+import SignUp from './pages/SignUp'
+import Settings from './pages/Settings'
+import { CommandPalette } from './components/CommandPalette'
+import { OnboardingTour } from './components/OnboardingTour'
+import { NotificationCenter, useNotifications } from './components/NotificationCenter'
 
-function Navigation() {
+function Sidebar({ isOpen, setIsOpen }) {
   const location = useLocation()
 
   const navItems = [
@@ -17,80 +23,291 @@ function Navigation() {
   ]
 
   return (
-    <nav className="bg-gradient-to-r from-white/10 to-white/5 backdrop-blur-3xl border-b border-white/20 sticky top-0 z-50 shadow-2xl">
-      <div className="container mx-auto px-8">
-        <div className="flex items-center justify-between h-24">
-          <div className="flex items-center space-x-16">
-            <Link to="/" className="flex items-center space-x-4 group">
-              <div className="relative">
-                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-white/10 rounded-2xl blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
-                <TestTube className="w-12 h-12 text-white transition-all duration-700 group-hover:scale-110 group-hover:rotate-12 group-hover:text-white/90 relative z-10" />
-              </div>
-              <span className="text-3xl font-bold text-gradient text-glow group-hover:scale-105 transition-transform duration-500">
-                QA Agent
-              </span>
-            </Link>
+    <>
+      {/* Overlay for mobile */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
 
-            <div className="flex space-x-3">
-              {navItems.map((item, idx) => {
-                const Icon = item.icon
-                const isActive = location.pathname === item.path
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    style={{ animationDelay: `${idx * 0.15}s` }}
-                    className={`flex items-center space-x-4 px-8 py-4 rounded-2xl transition-all duration-700 transform relative overflow-hidden group ${
-                      isActive
-                        ? 'bg-gradient-to-r from-white/15 to-white/10 text-white shadow-2xl shadow-white/25 border border-white/30 scale-105'
-                        : 'text-white/70 hover:bg-gradient-to-r hover:from-white/10 hover:to-white/5 hover:text-white hover:scale-105 hover:border-white/20 border border-transparent'
-                    }`}
-                  >
-                    {isActive && (
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/8 to-transparent animate-shimmer" />
-                    )}
-                    <Icon className={`w-6 h-6 transition-all duration-500 ${isActive ? 'text-white scale-110' : 'group-hover:scale-125 group-hover:text-white'}`} />
-                    <span className="relative z-10 font-bold text-lg tracking-wide">{item.label}</span>
-                    {isActive && (
-                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-white to-transparent rounded-full" />
-                    )}
-                  </Link>
-                )
-              })}
+      {/* Sidebar */}
+      <aside
+        className={`fixed top-0 left-0 h-full bg-slate-900/95 backdrop-blur-xl border-r border-slate-700 z-50 transition-all duration-300 ease-in-out ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        } lg:translate-x-0 w-64 flex flex-col`}
+      >
+        {/* Logo */}
+        <div className="flex items-center justify-between h-16 px-6 border-b border-slate-700">
+          <Link to="/" className="flex items-center space-x-3 group">
+            <div className="relative">
+              <div className="absolute inset-0 bg-slate-700 rounded-lg blur-md opacity-50 group-hover:opacity-75 transition-opacity" />
+              <div className="relative w-10 h-10 bg-gradient-to-br from-slate-700 to-slate-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg">
+                <TestTube className="w-5 h-5 text-white" />
+              </div>
+            </div>
+            <span className="text-lg font-bold text-white">QA Agent</span>
+          </Link>
+          <button
+            onClick={() => setIsOpen(false)}
+            className="lg:hidden p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 px-4 py-6 overflow-y-auto">
+          <div className="space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon
+              const isActive = location.pathname === item.path
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setIsOpen(false)}
+                  className={`sidebar-link ${isActive ? 'active' : ''}`}
+                >
+                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  <span className="font-medium">{item.label}</span>
+                </Link>
+              )
+            })}
+          </div>
+        </nav>
+
+        {/* Footer */}
+        <div className="px-4 py-4 border-t border-slate-700">
+          <Link
+            to="/settings"
+            className="sidebar-link"
+          >
+            <SettingsIcon className="w-5 h-5 flex-shrink-0" />
+            <span className="font-medium">Settings</span>
+          </Link>
+        </div>
+      </aside>
+    </>
+  )
+}
+
+function NotificationButton() {
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false)
+  const { unreadCount } = useNotifications()
+
+  return (
+    <>
+      <button
+        onClick={() => setNotificationCenterOpen(true)}
+        className="p-2 rounded-lg hover:bg-slate-800/50 text-slate-400 hover:text-white transition-colors relative"
+      >
+        <Bell className="w-5 h-5" />
+        {unreadCount > 0 && (
+          <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full"></span>
+        )}
+      </button>
+      <NotificationCenter
+        isOpen={notificationCenterOpen}
+        onClose={() => setNotificationCenterOpen(false)}
+      />
+    </>
+  )
+}
+
+function Navbar({ onMenuClick, navigate, onCommandClick }) {
+  const [searchQuery, setSearchQuery] = useState('')
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+
+  useEffect(() => {
+    // Check if user is authenticated
+    const token = localStorage.getItem('authToken')
+    setIsAuthenticated(!!token)
+  }, [])
+
+  const handleSignOut = () => {
+    localStorage.removeItem('authToken')
+    localStorage.removeItem('rememberMe')
+    setIsAuthenticated(false)
+    setUserMenuOpen(false)
+    navigate('/signin')
+  }
+
+  return (
+    <nav className="glass border-b border-slate-700 sticky top-0 z-30 backdrop-blur-xl">
+      <div className="h-16 flex items-center justify-between px-4 sm:px-6">
+        {/* Left Section */}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onMenuClick}
+            className="lg:hidden p-2 rounded-lg hover:bg-slate-800/50 text-slate-400 hover:text-white transition-colors"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          
+          {/* Search Bar */}
+          <div className="hidden md:flex items-center gap-2 flex-1 max-w-md">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search tests, results..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="input pl-10 pr-4 py-2 text-sm w-full"
+              />
             </div>
           </div>
+        </div>
 
-          <button className="text-white/70 hover:text-white transition-all duration-500 hover:rotate-90 hover:scale-110 p-4 rounded-2xl hover:bg-gradient-to-r hover:from-white/10 hover:to-white/5 border border-transparent hover:border-white/20 hover:shadow-lg hover:shadow-white/10">
-            <Settings className="w-7 h-7" />
-          </button>
+        {/* Right Section */}
+        <div className="flex items-center gap-2">
+          {/* Command Palette Trigger */}
+          {isAuthenticated && (
+            <button
+              onClick={onCommandClick}
+              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-600 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 text-sm transition-colors"
+              title="Command Palette (Ctrl+K)"
+            >
+              <Command className="w-4 h-4" />
+              <span className="hidden lg:inline">Commands</span>
+              <kbd className="hidden xl:inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-xs font-mono text-slate-600 dark:text-slate-300">
+                ⌘K
+              </kbd>
+            </button>
+          )}
+          
+          {/* Notifications */}
+          {isAuthenticated && (
+            <NotificationButton />
+          )}
+
+          {/* User Menu / Sign In */}
+          {isAuthenticated ? (
+            <div className="relative">
+              <button
+                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                className="p-2 rounded-lg hover:bg-slate-800/50 text-slate-400 hover:text-white transition-colors"
+              >
+                <User className="w-5 h-5" />
+              </button>
+
+              {/* User Dropdown Menu */}
+              {userMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setUserMenuOpen(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-2">
+                    <div className="px-4 py-3 border-b border-slate-700">
+                      <p className="text-sm font-semibold text-white">John Doe</p>
+                      <p className="text-xs text-slate-400 truncate">john.doe@example.com</p>
+                    </div>
+                    <Link
+                      to="/settings"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                    >
+                      <SettingsIcon className="w-4 h-4" />
+                      <span>Settings</span>
+                    </Link>
+                    <button
+                      onClick={handleSignOut}
+                      className="w-full flex items-center gap-3 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <Link
+              to="/signin"
+              className="btn btn-primary text-sm"
+            >
+              <LogIn className="w-4 h-4" />
+              <span className="hidden sm:inline">Sign In</span>
+            </Link>
+          )}
         </div>
       </div>
     </nav>
   )
 }
 
-function App() {
+function AppContent() {
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const location = useLocation()
+  const isAuthPage = location.pathname === '/signin' || location.pathname === '/signup'
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    if (isAuthPage) return
+
+    const handleKeyDown = (e) => {
+      // Cmd/Ctrl + K for command palette
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setCommandPaletteOpen(true)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isAuthPage])
+
+  if (isAuthPage) {
+    return (
+      <main className="flex-1 w-full">
+        <Routes>
+          <Route path="/signin" element={<SignIn />} />
+          <Route path="/signup" element={<SignUp />} />
+        </Routes>
+      </main>
+    )
+  }
+
   return (
-    <Router>
-      <div className="min-h-screen relative overflow-x-hidden">
-        {/* Enhanced Background Effects */}
-        <div className="fixed inset-0 bg-gradient-to-br from-black via-gray-900 to-black" />
-        <div className="fixed inset-0 bg-[radial-gradient(circle_at_20%_50%,rgba(255,255,255,0.1)_0%,transparent_50%)]" />
-        <div className="fixed inset-0 bg-[radial-gradient(circle_at_80%_20%,rgba(99,102,241,0.05)_0%,transparent_50%)]" />
-        <div className="fixed inset-0 bg-[radial-gradient(circle_at_40%_80%,rgba(255,255,255,0.03)_0%,transparent_50%)]" />
-        
-        {/* Grid Pattern Overlay */}
-        <div className="fixed inset-0 grid-pattern opacity-30" />
-        
-        <Navigation />
-        <main className="container mx-auto px-8 py-16 relative z-10">
+    <>
+      <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
+      <div className="flex-1 flex flex-col lg:ml-64">
+        <NavbarWithRouter 
+          onMenuClick={() => setSidebarOpen(!sidebarOpen)}
+          onCommandClick={() => setCommandPaletteOpen(true)}
+        />
+        <main className="flex-1 px-4 sm:px-6 py-6 sm:py-8 relative z-10">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/browser-use" element={<BrowserUse />} />
             <Route path="/results" element={<TestResults />} />
             <Route path="/quick-test" element={<QuickTest />} />
+            <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
+      </div>
+      <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+      <OnboardingTour />
+    </>
+  )
+}
+
+// Wrapper to use useNavigate hook
+function NavbarWithRouter({ onMenuClick, onCommandClick }) {
+  const navigate = useNavigate()
+  return <Navbar onMenuClick={onMenuClick} navigate={navigate} onCommandClick={onCommandClick} />
+}
+
+function App() {
+  return (
+    <Router>
+      <div className="min-h-screen relative flex">
+        <AppContent />
       </div>
     </Router>
   )

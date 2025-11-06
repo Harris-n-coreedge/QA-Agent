@@ -445,7 +445,7 @@ class PerformanceMonitor:
                             const paint = window.performance.getEntriesByType('paint');
                             
                             resolve({
-                                load_time: navigation ? navigation.loadEventEnd - navigation.loadEventStart : 0,
+                                load_time: navigation ? (navigation.loadEventEnd - navigation.fetchStart) : 0,
                                 first_contentful_paint: paint.find(p => p.name === 'first-contentful-paint')?.startTime || 0,
                                 largest_contentful_paint: 0, // Would need LCP API
                                 cumulative_layout_shift: 0, // Would need CLS API
@@ -3594,9 +3594,70 @@ OUTPUT FORMAT:
             except Exception as e:
                 report_lines.append(f"   ⚠️ UI analysis failed: {e}")
 
-            return "\n".join(report_lines)
+            # Return both text and structured JSON
+            text_result = "\n".join(report_lines)
+            
+            # Parse into structured format for better frontend display
+            structured_result = {
+                "type": "auto_check",
+                "summary": {
+                    "total_checks": 8,
+                    "passed": len([line for line in report_lines if "✅" in line]),
+                    "warnings": len([line for line in report_lines if "⚠️" in line]),
+                    "failed": len([line for line in report_lines if "❌" in line])
+                },
+                "checks": []
+            }
+            
+            # Parse each check into structured format
+            current_check = None
+            for line in report_lines:
+                if line.startswith("🧪"):
+                    continue  # Skip header
+                elif line.strip().startswith("✅") or line.strip().startswith("❌") or line.strip().startswith("⚠️"):
+                    # Save previous check if exists
+                    if current_check:
+                        structured_result["checks"].append(current_check)
+                    
+                    # Start new check
+                    status = "passed" if "✅" in line else "failed" if "❌" in line else "warning"
+                    title = line.split("|")[0].replace("✅", "").replace("❌", "").replace("⚠️", "").strip()
+                    current_check = {
+                        "status": status,
+                        "title": title,
+                        "details": [],
+                        "suggestions": []
+                    }
+                elif line.strip().startswith("↳"):
+                    detail = line.replace("↳", "").strip()
+                    if current_check:
+                        if any(keyword in detail.lower() for keyword in ["suggestion", "suggest", "improve", "add", "fix"]):
+                            current_check["suggestions"].append(detail)
+                        else:
+                            current_check["details"].append(detail)
+                elif current_check and line.strip():
+                    current_check["details"].append(line.strip())
+            
+            # Add last check
+            if current_check:
+                structured_result["checks"].append(current_check)
+            
+            # Return JSON string with both text and structured data
+            return json.dumps({
+                "text": text_result,
+                "structured": structured_result
+            }, indent=2)
         except Exception as e:
-            return f"❌ Auto checks failed unexpectedly: {e}"
+            error_msg = f"❌ Auto checks failed unexpectedly: {e}"
+            return json.dumps({
+                "text": error_msg,
+                "structured": {
+                    "type": "auto_check",
+                    "error": str(e),
+                    "summary": {"total_checks": 0, "passed": 0, "warnings": 0, "failed": 1},
+                    "checks": []
+                }
+            }, indent=2)
 
     async def _run_auto_audit(self) -> str:
         """Run a detailed site audit with additional checks and actionable guidance."""
@@ -3726,9 +3787,83 @@ OUTPUT FORMAT:
             except Exception:
                 lines.append("   ⚠️ Forms analysis failed")
 
-            return "\n".join(lines)
+            # Return both text and structured JSON
+            text_result = "\n".join(lines)
+            
+            # Parse into structured format
+            structured_result = {
+                "type": "auto_audit",
+                "summary": {
+                    "total_audits": 6,
+                    "passed": len([line for line in lines if "✅" in line or ("yes" in line.lower() and "no" not in line.lower())]),
+                    "warnings": len([line for line in lines if "⚠️" in line]),
+                    "issues_found": len([line for line in lines if "broken" in line.lower() or "missing" in line.lower() or "no " in line.lower()])
+                },
+                "audits": []
+            }
+            
+            # Parse each audit into structured format
+            current_audit = None
+            for line in lines:
+                if line.startswith("🧾"):
+                    continue  # Skip header
+                elif any(line.strip().startswith(emoji) for emoji in ["🔎", "🔗", "🖼️", "🍪", "📦", "📝"]):
+                    # Save previous audit if exists
+                    if current_audit:
+                        structured_result["audits"].append(current_audit)
+                    
+                    # Start new audit
+                    emoji_to_name = {
+                        "🔎": "SEO",
+                        "🔗": "Links",
+                        "🖼️": "Images",
+                        "🍪": "Cookies",
+                        "📦": "Resources",
+                        "📝": "Forms"
+                    }
+                    emoji = next((e for e in emoji_to_name.keys() if line.startswith(f"   {e}")), None)
+                    audit_name = emoji_to_name.get(emoji, "Unknown")
+                    
+                    current_audit = {
+                        "name": audit_name,
+                        "status": "passed",
+                        "details": [],
+                        "suggestions": []
+                    }
+                    
+                    # Extract main info
+                    main_info = line.split("|")[0].replace(emoji or "", "").strip() if emoji else line.strip()
+                    current_audit["details"].append(main_info)
+                elif line.strip().startswith("↳"):
+                    detail = line.replace("↳", "").strip()
+                    if current_audit:
+                        if any(keyword in detail.lower() for keyword in ["suggestion", "suggest", "improve", "add", "fix", "note"]):
+                            current_audit["suggestions"].append(detail)
+                        else:
+                            current_audit["details"].append(detail)
+                elif current_audit and line.strip() and not line.startswith("   "):
+                    current_audit["details"].append(line.strip())
+            
+            # Add last audit
+            if current_audit:
+                structured_result["audits"].append(current_audit)
+            
+            # Return JSON string with both text and structured data
+            return json.dumps({
+                "text": text_result,
+                "structured": structured_result
+            }, indent=2)
         except Exception as e:
-            return f"❌ Detailed audit failed: {e}"
+            error_msg = f"❌ Detailed audit failed: {e}"
+            return json.dumps({
+                "text": error_msg,
+                "structured": {
+                    "type": "auto_audit",
+                    "error": str(e),
+                    "summary": {"total_audits": 0, "passed": 0, "warnings": 0, "issues_found": 0},
+                    "audits": []
+                }
+            }, indent=2)
     
     async def _call_openai_api(self, prompt: str) -> str:
         """Call OpenAI API with the prompt."""
