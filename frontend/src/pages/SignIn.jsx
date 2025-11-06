@@ -36,38 +36,38 @@ export default function SignIn() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12">
+    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-[#0a0a0a]">
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
           <Link to="/" className="inline-flex items-center space-x-3 group">
             <div className="relative">
-              <div className="absolute inset-0 bg-slate-700 rounded-lg blur-md opacity-50 group-hover:opacity-75 transition-opacity" />
-              <div className="relative w-12 h-12 bg-gradient-to-br from-slate-700 to-slate-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg">
+              <div className="absolute inset-0 bg-purple-600 rounded-lg blur-md opacity-50 group-hover:opacity-75 transition-opacity" />
+              <div className="relative w-12 h-12 bg-gradient-to-br from-purple-600 to-purple-500 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg shadow-purple-500/20">
                 <TestTube className="w-6 h-6 text-white" />
               </div>
             </div>
             <span className="text-2xl font-bold text-white">QA Agent</span>
           </Link>
-          <p className="text-slate-400 mt-2">Sign in to your account</p>
+          <p className="text-gray-400 mt-2">Sign in to your account</p>
         </div>
 
         {/* Sign In Form */}
         <div className="card p-6 md:p-8">
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
-              <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 px-4 py-3 rounded-lg text-sm">
+              <div className="bg-red-500/10 border border-red-500/30 text-red-300 px-4 py-3 rounded-lg text-sm">
                 {error}
               </div>
             )}
 
             <div>
-              <label className="label">Email Address</label>
+              <label className="label text-gray-300">Email Address</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-500" />
+                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500" />
                 <input
                   type="email"
-                  className="input pl-10"
+                  className="input pl-10 bg-[#1a1a1a] border-gray-700 text-white placeholder-gray-500"
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -78,12 +78,12 @@ export default function SignIn() {
             </div>
 
             <div>
-              <label className="label">Password</label>
+              <label className="label text-gray-300">Password</label>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-500" />
+                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500" />
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  className="input pl-10 pr-10"
+                  className="input pl-10 pr-10 bg-[#1a1a1a] border-gray-700 text-white placeholder-gray-500"
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -93,7 +93,7 @@ export default function SignIn() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-500 hover:text-white transition-colors"
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
                   disabled={loading}
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
@@ -107,14 +107,14 @@ export default function SignIn() {
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-indigo-600 focus:ring-indigo-500 focus:ring-2"
+                  className="w-4 h-4 rounded border-gray-700 bg-[#1a1a1a] text-purple-600 focus:ring-purple-500 focus:ring-2"
                   disabled={loading}
                 />
-                <span className="text-sm text-slate-400">Remember me</span>
+                <span className="text-sm text-gray-400">Remember me</span>
               </label>
               <Link
                 to="/forgot-password"
-                className="text-sm text-slate-400 hover:text-white transition-colors"
+                className="text-sm text-gray-400 hover:text-white transition-colors"
               >
                 Forgot password?
               </Link>
@@ -140,11 +140,11 @@ export default function SignIn() {
           </form>
 
           <div className="mt-6 text-center">
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-gray-400">
               Don't have an account?{' '}
               <Link
                 to="/signup"
-                className="text-white font-semibold hover:text-slate-300 transition-colors"
+                className="text-white font-semibold hover:text-purple-400 transition-colors"
               >
                 Sign up
               </Link>

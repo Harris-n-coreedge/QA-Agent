@@ -27,23 +27,23 @@ function Sidebar({ isOpen, setIsOpen }) {
       {/* Overlay for mobile */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className="fixed inset-0 bg-black/70 z-40 lg:hidden"
           onClick={() => setIsOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 h-full bg-slate-900/95 backdrop-blur-xl border-r border-slate-700 z-50 transition-all duration-300 ease-in-out ${
+        className={`fixed top-0 left-0 h-full bg-[#111111] backdrop-blur-xl border-r border-gray-800 z-50 transition-all duration-300 ease-in-out ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0 w-64 flex flex-col`}
       >
         {/* Logo */}
-        <div className="flex items-center justify-between h-16 px-6 border-b border-slate-700">
+        <div className="flex items-center justify-between h-16 px-6 border-b border-gray-800">
           <Link to="/" className="flex items-center space-x-3 group">
             <div className="relative">
-              <div className="absolute inset-0 bg-slate-700 rounded-lg blur-md opacity-50 group-hover:opacity-75 transition-opacity" />
-              <div className="relative w-10 h-10 bg-gradient-to-br from-slate-700 to-slate-600 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg">
+              <div className="absolute inset-0 bg-purple-600 rounded-lg blur-md opacity-50 group-hover:opacity-75 transition-opacity" />
+              <div className="relative w-10 h-10 bg-gradient-to-br from-purple-600 to-purple-500 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg shadow-purple-500/20">
                 <TestTube className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -51,7 +51,7 @@ function Sidebar({ isOpen, setIsOpen }) {
           </Link>
           <button
             onClick={() => setIsOpen(false)}
-            className="lg:hidden p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            className="lg:hidden p-2 rounded-lg hover:bg-[#1a1a1a] text-gray-400 hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -79,7 +79,7 @@ function Sidebar({ isOpen, setIsOpen }) {
         </nav>
 
         {/* Footer */}
-        <div className="px-4 py-4 border-t border-slate-700">
+        <div className="px-4 py-4 border-t border-gray-800">
           <Link
             to="/settings"
             className="sidebar-link"
@@ -101,11 +101,11 @@ function NotificationButton() {
     <>
       <button
         onClick={() => setNotificationCenterOpen(true)}
-        className="p-2 rounded-lg hover:bg-slate-800/50 text-slate-400 hover:text-white transition-colors relative"
+        className="p-2 rounded-lg hover:bg-[#1a1a1a] text-gray-400 hover:text-white transition-colors relative"
       >
         <Bell className="w-5 h-5" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full"></span>
+          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
         )}
       </button>
       <NotificationCenter
@@ -136,13 +136,13 @@ function Navbar({ onMenuClick, navigate, onCommandClick }) {
   }
 
   return (
-    <nav className="glass border-b border-slate-700 sticky top-0 z-30 backdrop-blur-xl">
+    <nav className="glass border-b border-gray-800 sticky top-0 z-30 backdrop-blur-xl bg-[#111111]/95">
       <div className="h-16 flex items-center justify-between px-4 sm:px-6">
         {/* Left Section */}
         <div className="flex items-center gap-4">
           <button
             onClick={onMenuClick}
-            className="lg:hidden p-2 rounded-lg hover:bg-slate-800/50 text-slate-400 hover:text-white transition-colors"
+            className="lg:hidden p-2 rounded-lg hover:bg-[#1a1a1a] text-gray-400 hover:text-white transition-colors"
           >
             <Menu className="w-5 h-5" />
           </button>
@@ -150,13 +150,13 @@ function Navbar({ onMenuClick, navigate, onCommandClick }) {
           {/* Search Bar */}
           <div className="hidden md:flex items-center gap-2 flex-1 max-w-md">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500" />
               <input
                 type="text"
                 placeholder="Search tests, results..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="input pl-10 pr-4 py-2 text-sm w-full"
+                className="input pl-10 pr-4 py-2 text-sm w-full bg-[#1a1a1a] border-gray-800 text-white placeholder-gray-500"
               />
             </div>
           </div>
@@ -168,12 +168,12 @@ function Navbar({ onMenuClick, navigate, onCommandClick }) {
           {isAuthenticated && (
             <button
               onClick={onCommandClick}
-              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-600 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 text-sm transition-colors"
+              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-800 bg-[#1a1a1a] hover:bg-[#111111] text-gray-400 hover:text-white text-sm transition-colors"
               title="Command Palette (Ctrl+K)"
             >
               <Command className="w-4 h-4" />
               <span className="hidden lg:inline">Commands</span>
-              <kbd className="hidden xl:inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-xs font-mono text-slate-600 dark:text-slate-300">
+              <kbd className="hidden xl:inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0a0a0a] border border-gray-800 text-xs font-mono text-gray-300">
                 ⌘K
               </kbd>
             </button>
@@ -189,7 +189,7 @@ function Navbar({ onMenuClick, navigate, onCommandClick }) {
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="p-2 rounded-lg hover:bg-slate-800/50 text-slate-400 hover:text-white transition-colors"
+                className="p-2 rounded-lg hover:bg-[#1a1a1a] text-gray-400 hover:text-white transition-colors"
               >
                 <User className="w-5 h-5" />
               </button>
@@ -201,22 +201,22 @@ function Navbar({ onMenuClick, navigate, onCommandClick }) {
                     className="fixed inset-0 z-40"
                     onClick={() => setUserMenuOpen(false)}
                   />
-                  <div className="absolute right-0 mt-2 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-2">
-                    <div className="px-4 py-3 border-b border-slate-700">
+                  <div className="absolute right-0 mt-2 w-56 bg-[#1a1a1a] border border-gray-800 rounded-lg shadow-xl z-50 py-2">
+                    <div className="px-4 py-3 border-b border-gray-800">
                       <p className="text-sm font-semibold text-white">John Doe</p>
-                      <p className="text-xs text-slate-400 truncate">john.doe@example.com</p>
+                      <p className="text-xs text-gray-400 truncate">john.doe@example.com</p>
                     </div>
                     <Link
                       to="/settings"
                       onClick={() => setUserMenuOpen(false)}
-                      className="flex items-center gap-3 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                      className="flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-[#111111] hover:text-white transition-colors"
                     >
                       <SettingsIcon className="w-4 h-4" />
                       <span>Settings</span>
                     </Link>
                     <button
                       onClick={handleSignOut}
-                      className="w-full flex items-center gap-3 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-300 hover:bg-[#111111] hover:text-white transition-colors"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Sign Out</span>
