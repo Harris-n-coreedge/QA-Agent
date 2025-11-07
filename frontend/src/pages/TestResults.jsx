@@ -1,12 +1,25 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { BarChart3, Loader, CheckCircle, XCircle, Clock, Filter, Download, Search, X, FileDown, GitCompare, History } from 'lucide-react'
+import { BarChart3, Loader, CheckCircle, XCircle, Clock, Filter, Download, Search, X, FileDown, GitCompare, History, FileText } from 'lucide-react'
 import { testResultsAPI } from '../api/client'
 import { usePDFExporter } from '../components/PDFExporter'
 import { TestComparison } from '../components/TestComparison'
 import { TestHistory } from '../components/TestHistory'
 import { ScreenshotGallery } from '../components/ScreenshotGallery'
-import { TestTags } from '../components/TestTags'
+import { TestTags, TagFilter } from '../components/TestTags'
+
+const normalizeResultText = (value) => {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
 
 function TestResultCard({ result }) {
   const [lightbox, setLightbox] = useState({ open: false, src: '' })
@@ -124,8 +137,10 @@ function TestResultCard({ result }) {
               </div>
               <div className="bg-black/50 p-6 rounded-2xl border border-white/10 overflow-x-auto">
                 {(() => {
+                  const rawResult = result.result
+                  const resultString = normalizeResultText(rawResult)
                   try {
-                    const parsed = JSON.parse(result.result)
+                    const parsed = JSON.parse(resultString)
                     if (parsed.text && parsed.structured) {
                       // Structured result - show both
                       return (
@@ -157,10 +172,20 @@ function TestResultCard({ result }) {
                       </pre>
                     )
                   } catch (e) {
+                    const fallbackText =
+                      typeof rawResult === 'string'
+                        ? rawResult
+                        : (() => {
+                            try {
+                              return JSON.stringify(rawResult, null, 2)
+                            } catch {
+                              return String(rawResult)
+                            }
+                          })()
                     // Not JSON, show as plain text
                     return (
                       <pre className="text-white/90 whitespace-pre-wrap leading-relaxed text-sm font-mono max-h-[600px] overflow-y-auto">
-                        {result.result}
+                        {fallbackText}
                       </pre>
                     )
                   }
@@ -247,7 +272,7 @@ function TestResults() {
       const query = searchQuery.toLowerCase()
       filtered = filtered.filter(r => 
         r.command?.toLowerCase().includes(query) ||
-        r.result?.toLowerCase().includes(query) ||
+        normalizeResultText(r.result).toLowerCase().includes(query) ||
         r.test_id?.toLowerCase().includes(query)
       )
     }
