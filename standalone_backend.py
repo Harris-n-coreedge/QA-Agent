@@ -173,11 +173,11 @@ async def _start_browser_session(website_url: str = "https://www.w3schools.com/"
         # We need to directly initialize browser instead of using start_session
         # because start_session has headless=False hardcoded
         from playwright.async_api import async_playwright
-        print("🤖 Multi-AI QA Agent Starting (Headless for Embedding)...")
+        print("Multi-AI QA Agent Starting (Headless for Embedding)...")
         print("=" * 40)
-        print(f"🌐 Opening: {website_url}")
-        print(f"🧠 AI Provider: {global_agent.ai_provider.upper()}")
-        print("👁️ Browser Mode: HEADLESS (embedded)")
+        print(f"Opening: {website_url}")
+        print(f"AI Provider: {global_agent.ai_provider.upper()}")
+        print("Browser Mode: HEADLESS (embedded)")
         
         global_agent.playwright = await async_playwright().start()
         global_agent.browser = await global_agent.playwright.chromium.launch(
@@ -213,7 +213,7 @@ async def _start_browser_session(website_url: str = "https://www.w3schools.com/"
                 try:
                     await global_agent.current_page.goto(website_url, wait_until="commit", timeout=30000)
                 except Exception as e3:
-                    print(f"⚠️ Navigation still timing out: {e3}. Continuing best-effort.")
+                    print(f" Navigation still timing out: {e3}. Continuing best-effort.")
         
         try:
             await global_agent.current_page.wait_for_selector("body", timeout=10000)
@@ -225,7 +225,7 @@ async def _start_browser_session(website_url: str = "https://www.w3schools.com/"
         try:
             await global_agent._analyze_page_characteristics()
         except Exception as e:
-            print(f"⚠️ Page analysis failed: {e}")
+            print(f"Page analysis failed: {e}")
         
         # Auto-check if requested
         if auto_check:
@@ -233,10 +233,10 @@ async def _start_browser_session(website_url: str = "https://www.w3schools.com/"
                 summary = await global_agent._run_auto_checks()
                 print(summary)
             except Exception as e:
-                print(f"⚠️ Auto-checks failed: {e}")
+                print(f"Auto-checks failed: {e}")
         
         global_agent.current_url = website_url
-        print("✅ Agent ready (Headless)! I can understand natural language commands.")
+        print("Agent ready (Headless)! I can understand natural language commands.")
         agent_status = "active"
         agent_error = None
         return True
@@ -516,7 +516,7 @@ async def navigate_to_url(request: NavigateRequest):
                 await global_agent._analyze_page_characteristics()
         except Exception as e:
             # Log but don't fail - page analysis is optional
-            print(f"⚠️ Page analysis after navigation failed: {e}")
+            print(f"Page analysis after navigation failed: {e}")
 
         return {
             "message": f"Successfully navigated to {website_url}",
@@ -606,7 +606,7 @@ async def execute_command(request: CommandRequest):
                     # Keep at bottom for a moment before executing command
                     await asyncio.sleep(0.5)
             except Exception as scroll_error:
-                print(f"⚠️ Scrolling during {command_lower} failed: {scroll_error}")
+                print(f"Scrolling during {command_lower} failed: {scroll_error}")
 
         # Execute the command
         result = await global_agent.process_command(request.command)
@@ -764,7 +764,7 @@ async def run_cross_browser_test(request: CrossBrowserTestRequest):
         
         for browser_type in browsers_to_test:
             try:
-                print(f"🌐 Testing on {browser_type}...")
+                print(f"Testing on {browser_type}...")
                 
                 # Launch browser in headless mode (for embedding)
                 playwright = await async_playwright().start()

@@ -145,6 +145,8 @@ export default function QuickTest() {
         setShowBrowser(false)
         setBrowserScreenshot(null)
         setBrowserUrl(null)
+
+        toast.success(`${command} completed`)
       } catch (cmdError) {
         // Stop screenshot polling on error
         if (screenshotInterval) clearInterval(screenshotInterval)
@@ -156,7 +158,13 @@ export default function QuickTest() {
       setShowBrowser(false)
       setBrowserScreenshot(null)
       setBrowserUrl(null)
+
+      const errorMessage = e?.response?.data?.detail || e.message || `Failed to run ${command}`
+      toast.error(errorMessage)
     } finally {
+      if (loadingToast) {
+        toast.removeToast(loadingToast)
+      }
       setRunning(false)
     }
   }
