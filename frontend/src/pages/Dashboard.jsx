@@ -32,8 +32,8 @@ function StatCard({ title, value, icon: Icon, trend, color = 'primary', delay = 
   const config = colorConfig[color]
 
   return (
-    <div 
-      className={`card-stat hover-lift ${config.border}`}
+    <div
+      className={`card-stat hover-lift ${config.border} animate-slide-in-up`}
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-start justify-between mb-3">
@@ -68,8 +68,8 @@ function RecentTest({ test, delay = 0 }) {
   const Icon = config.icon
 
   return (
-    <div 
-      className="card hover-lift cursor-pointer group p-4"
+    <div
+      className="card hover-lift cursor-pointer group p-4 animate-slide-in-right transition-all duration-300 hover:scale-[1.02]"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-start gap-3">
@@ -208,7 +208,7 @@ function Dashboard() {
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Status Distribution */}
-        <div className="card p-5 md:p-6">
+        <div className="glass-card p-5 md:p-6 animate-fade-in" style={{ animationDelay: '400ms' }}>
           <div className="mb-5 md:mb-6">
             <h2 className="text-base md:text-lg font-semibold text-white mb-1">Test Status Distribution</h2>
             <p className="text-xs md:text-sm text-gray-400">Overview of test results</p>
@@ -229,7 +229,7 @@ function Dashboard() {
         </div>
 
         {/* Trend Chart */}
-        <div className="card p-5 md:p-6">
+        <div className="glass-card p-5 md:p-6 animate-fade-in" style={{ animationDelay: '500ms' }}>
           <div className="mb-5 md:mb-6">
             <h2 className="text-base md:text-lg font-semibold text-white mb-1">Weekly Trend</h2>
             <p className="text-xs md:text-sm text-gray-400">Test execution over time</p>
@@ -242,7 +242,7 @@ function Dashboard() {
 
       {/* Recent Tests & Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 card p-5 md:p-6">
+        <div className="lg:col-span-2 glass-card p-5 md:p-6 animate-fade-in" style={{ animationDelay: '600ms' }}>
           <div className="flex items-center justify-between mb-5 md:mb-6">
             <div>
               <h2 className="text-base md:text-lg font-semibold text-white mb-1">Recent Tests</h2>
@@ -275,12 +275,12 @@ function Dashboard() {
         </div>
 
         {/* Advanced Analytics */}
-        <div className="card p-5 md:p-6">
+        <div className="glass-card p-5 md:p-6 animate-fade-in" style={{ animationDelay: '700ms' }}>
           <AdvancedAnalytics testResults={testResults?.results || []} />
         </div>
 
         {/* System Health */}
-        <div className="card p-5 md:p-6">
+        <div className="glass-card p-5 md:p-6 animate-fade-in" style={{ animationDelay: '800ms' }}>
           <div className="mb-5 md:mb-6">
             <h2 className="text-base md:text-lg font-semibold text-white mb-1">System Health</h2>
             <p className="text-xs md:text-sm text-gray-400">Current system status</p>

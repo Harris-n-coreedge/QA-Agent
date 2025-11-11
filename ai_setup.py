@@ -177,6 +177,7 @@ def test_ai_connection():
 
 
 def show_usage_examples():
+    
     """Show usage examples for the AI agent."""
     print("\n💡 Usage Examples")
     print("-" * 16)

@@ -45,8 +45,8 @@ function TestResultCard({ result }) {
   const device = result.device
 
   return (
-    <div className="card fade-in hover-lift hover-glow">
-      <div className="flex items-start space-x-6">
+    <div className="glass-card fade-in hover-lift hover-glow animate-slide-in-up transition-all duration-300">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
         <div className="mt-2">{statusIcons[result.status]}</div>
         <div className="flex-1">
           <div className="flex items-start justify-between mb-6 gap-6">
@@ -255,7 +255,7 @@ function TestResults() {
     return saved ? JSON.parse(saved) : []
   }, [])
 
-  const { data: results, isLoading } = useQuery({
+  const { data: results, isLoading, error: resultsError, isError: isResultsError, refetch: refetchResults } = useQuery({
     queryKey: ['test-results', limit],
     queryFn: () => testResultsAPI.list(limit),
     refetchInterval: 3000,
@@ -355,7 +355,7 @@ function TestResults() {
   const runningTests = results?.results?.filter(r => r.status === 'running').length || 0
 
   return (
-    <div className="space-y-6">
+    <div className="layout-container space-y-6">
       <div className="page-header">
         <h1 className="page-title">Test Results</h1>
         <p className="page-description">
@@ -376,31 +376,31 @@ function TestResults() {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
-        <div className="card-stat bg-slate-800/50 border-slate-700/50">
+        <div className="card-stat bg-slate-800/50 border-slate-700/50 animate-slide-in-up hover:scale-105 transition-transform" style={{ animationDelay: '0ms' }}>
           <div className="text-center">
             <p className="text-xl md:text-2xl font-bold text-white mb-1">{results?.total || 0}</p>
             <p className="text-xs text-slate-400">Total Tests</p>
           </div>
         </div>
-        <div className="card-stat bg-emerald-500/10 border-emerald-500/20">
+        <div className="card-stat bg-emerald-500/10 border-emerald-500/20 animate-slide-in-up hover:scale-105 transition-transform" style={{ animationDelay: '100ms' }}>
           <div className="text-center">
             <p className="text-xl md:text-2xl font-bold text-white mb-1">{passedTests}</p>
             <p className="text-xs text-slate-400">Passed</p>
           </div>
         </div>
-        <div className="card-stat bg-amber-500/10 border-amber-500/20">
+        <div className="card-stat bg-amber-500/10 border-amber-500/20 animate-slide-in-up hover:scale-105 transition-transform" style={{ animationDelay: '200ms' }}>
           <div className="text-center">
             <p className="text-xl md:text-2xl font-bold text-white mb-1">{completedTests}</p>
             <p className="text-xs text-slate-400">Completed</p>
           </div>
         </div>
-        <div className="card-stat bg-rose-500/10 border-rose-500/20">
+        <div className="card-stat bg-rose-500/10 border-rose-500/20 animate-slide-in-up hover:scale-105 transition-transform" style={{ animationDelay: '300ms' }}>
           <div className="text-center">
             <p className="text-xl md:text-2xl font-bold text-white mb-1">{failedTests}</p>
             <p className="text-xs text-slate-400">Failed</p>
           </div>
         </div>
-        <div className="card-stat bg-blue-500/10 border-blue-500/20 col-span-2 md:col-span-1">
+        <div className="card-stat bg-blue-500/10 border-blue-500/20 col-span-2 md:col-span-1 animate-slide-in-up hover:scale-105 transition-transform" style={{ animationDelay: '400ms' }}>
           <div className="text-center">
             <p className="text-xl md:text-2xl font-bold text-white mb-1">{runningTests}</p>
             <p className="text-xs text-slate-400">Running</p>
@@ -408,7 +408,7 @@ function TestResults() {
         </div>
       </div>
 
-      <div className="card p-5 md:p-6">
+      <div className="glass-card p-5 md:p-6 animate-fade-in" style={{ animationDelay: '500ms' }}>
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-5 md:mb-6">
           <div>
             <h2 className="text-base md:text-lg font-semibold text-white mb-1">Filters & Search</h2>
@@ -566,13 +566,37 @@ function TestResults() {
         </div>
       </div>
 
+      {resultsError && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="card glass border-red-500/40 bg-red-500/15 text-red-100 px-4 py-6"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold">Unable to refresh test results.</p>
+              <p className="text-xs text-red-200/80">
+                {resultsError?.message || 'The server did not respond. Please try again shortly.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => refetchResults()}
+              className="btn btn-secondary text-xs sm:text-sm whitespace-nowrap"
+            >
+              Retry now
+            </button>
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex flex-col items-center justify-center py-32">
           <Loader className="w-20 h-20 animate-spin text-white mb-8" />
           <p className="text-white/80 text-2xl font-bold">Loading test results...</p>
         </div>
       ) : filteredResults.length > 0 ? (
-        <div className="space-y-8">
+        <div className="space-y-8" aria-live="polite">
           {filteredResults.map((result, idx) => (
             <div key={result.test_id} style={{ animationDelay: `${idx * 0.1}s` }}>
               <TestResultCard result={result} />

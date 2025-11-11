@@ -11,6 +11,7 @@ import Settings from './pages/Settings'
 import { CommandPalette } from './components/CommandPalette'
 import { OnboardingTour } from './components/OnboardingTour'
 import { NotificationCenter, useNotifications } from './components/NotificationCenter'
+import { ParticleBackground } from './components/ParticleBackground'
 
 function Sidebar({ isOpen, setIsOpen }) {
   const location = useLocation()
@@ -307,6 +308,7 @@ function App() {
   return (
     <Router>
       <div className="min-h-screen relative flex">
+        <ParticleBackground particleCount={60} color="#8b5cf6" />
         <AppContent />
       </div>
     </Router>

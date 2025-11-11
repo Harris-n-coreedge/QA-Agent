@@ -1,0 +1,2 @@
+2025-11-11 13:05 - Introduced live query sync helper, surfaced retryable error banners, and improved aria-live feedback for dynamic content.
+

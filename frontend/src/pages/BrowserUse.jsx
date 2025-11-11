@@ -33,7 +33,7 @@ function BrowserUse() {
   ]
  
   return (
-    <div className="space-y-12 fade-in">
+    <div className="layout-container space-y-10 fade-in">
       <div className="page-header">
         <h1 className="page-title">Browser Use</h1>
         <p className="page-description">
@@ -41,8 +41,8 @@ function BrowserUse() {
         </p>
       </div>
 
-      <div className="card p-5 md:p-6 hover-lift">
-        <div className="flex items-center gap-4 md:gap-6 mb-6 md:mb-8">
+      <div className="glass-card p-5 md:p-6 hover-lift animate-fade-in" style={{ animationDelay: '0ms' }}>
+        <div className="flex items-start gap-4 md:gap-6 mb-5 md:mb-6">
           <div className="p-3 md:p-4 rounded-xl bg-slate-700/50 border border-slate-600/50 flex-shrink-0">
             <Zap className="w-6 h-6 md:w-8 md:h-8 text-slate-300" />
           </div>
@@ -100,7 +100,7 @@ function BrowserUse() {
         )}
       </div>
 
-      <div className="card p-5 md:p-6 hover-lift">
+      <div className="glass-card p-5 md:p-6 hover-lift animate-fade-in" style={{ animationDelay: '100ms' }}>
         <div className="flex items-center gap-3 md:gap-4 mb-5 md:mb-6">
           <div className="p-2.5 md:p-3 rounded-lg bg-slate-700/50 border border-slate-600/50 flex-shrink-0">
             <Brain className="w-5 h-5 md:w-6 md:h-6 text-slate-300" />
@@ -113,8 +113,8 @@ function BrowserUse() {
           {exampleTasks.map((example, idx) => (
             <button
               key={idx}
-              style={{ animationDelay: `${idx * 0.1}s` }}
-              className="text-left card p-4 md:p-5 hover-lift group fade-in"
+              style={{ animationDelay: `${(idx + 2) * 100}ms` }}
+              className="text-left glass-card p-4 md:p-5 hover-lift group animate-slide-in-up transition-all duration-300 hover:scale-[1.02]"
               onClick={() => setTask(example)}
               disabled={executeMutation.isPending}
             >
