@@ -6,15 +6,16 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 from enum import Enum
 from contextlib import asynccontextmanager
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import sys
 import os
+import socket
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +26,22 @@ agent_status: str = "uninitialized"  # uninitialized, initializing, active, fail
 agent_error: Optional[str] = None
 commands_executed: int = 0
 test_results: Dict[str, Dict] = {}
+chat_sessions: Dict[str, Dict[str, Any]] = {}
+call_sessions: Dict[str, Dict[str, Any]] = {}
+
+DEFAULT_QA_CHAT_PROMPT = (
+    "You are Dashdark QA Copilot, a senior quality assurance partner embedded in our automation "
+    "platform. Provide concise, actionable guidance for manual and automated testing, test data "
+    "design, risk analysis, and release readiness. When needed, ask clarifying questions before "
+    "suggesting solutions. Prefer bullet points, highlight critical blockers, and include references "
+    "to QA best practices. You can also schedule follow-up syncs or handoff calls when collaboration "
+    "is needed, so include a recommendation for a call if teamwork will unblock progress. Assume you "
+    "can orchestrate tests through the platform and collaborate with developers, product managers, "
+    "and other QA engineers."
+)
+
+_gemini_model: Optional[Any] = None
+_gemini_lock = asyncio.Lock()
 # Store external browsers to keep them alive
 external_browsers: Dict[str, Any] = {}  # Store playwright and browser instances
 
@@ -338,6 +355,190 @@ class TestResultResponse(BaseModel):
     error: Optional[str] = None
 
 
+class ChatMessage(BaseModel):
+    """Single message in a chat exchange"""
+    role: Literal["user", "assistant"]
+    content: str
+    timestamp: Optional[str] = None
+
+
+class ChatRequest(BaseModel):
+    """Request payload for chat with QA copilot"""
+    conversation_id: Optional[str] = Field(default=None, description="Existing conversation identifier")
+    message: str = Field(..., min_length=1, description="User message to send to the QA assistant")
+    history: List[ChatMessage] = Field(default_factory=list, description="Optional prior conversation history")
+    persona: Optional[str] = Field(default=None, description="Optional persona or project label for the conversation")
+
+
+class ChatReply(BaseModel):
+    """Assistant reply message"""
+    id: str
+    role: Literal["assistant", "user"]
+    content: str
+    timestamp: str
+
+
+class ChatResponse(BaseModel):
+    """Response payload after chatting with QA copilot"""
+    conversation_id: str
+    reply: ChatReply
+    usage: Optional[Dict[str, Any]] = None
+    suggestions: Optional[List[str]] = None
+
+
+class CallRequestPayload(BaseModel):
+    """Request payload to initiate a QA consultation call"""
+    conversation_id: Optional[str] = Field(default=None, description="Related chat conversation identifier")
+    topic: Optional[str] = Field(default=None, description="Primary focus for the call")
+    participants: List[str] = Field(default_factory=list, description="Stakeholders or teammates to include")
+    preferred_time: Optional[str] = Field(default=None, description="Preferred time in ISO format")
+    duration_minutes: int = Field(default=30, ge=15, le=90, description="Call duration in minutes")
+    mode: Literal["voice", "video"] = Field(default="voice", description="Preferred collaboration medium")
+    notes: Optional[str] = Field(default=None, description="Additional context for the facilitator")
+
+
+class CallResponsePayload(BaseModel):
+    """Response payload summarising the call scheduling"""
+    call_id: str
+    conversation_id: str
+    status: str
+    topic: str
+    scheduled_for: str
+    duration_minutes: int
+    mode: Literal["voice", "video"]
+    participants: List[str]
+    join_url: str
+    dial_in: str
+    summary: Optional[str] = None
+
+
+class CallStatusPayload(BaseModel):
+    """Response payload when checking call status"""
+    call_id: str
+    status: str
+    topic: str
+    scheduled_for: str
+    duration_minutes: int
+    mode: Literal["voice", "video"]
+    participants: List[str]
+    join_url: str
+    dial_in: str
+    summary: Optional[str] = None
+
+
+async def _ensure_gemini_model():
+    """Ensure the Gemini model is configured and ready."""
+    global _gemini_model
+    if _gemini_model is not None:
+        return _gemini_model
+
+    async with _gemini_lock:
+        if _gemini_model is not None:
+            return _gemini_model
+
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="Google Gemini API key not configured. Set GOOGLE_API_KEY in the environment.",
+            )
+
+        try:
+            import google.generativeai as genai
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail="google-generativeai package is not installed. Add it to requirements to enable chat.",
+            ) from exc
+
+        genai.configure(api_key=api_key)
+        model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-1.5-flash-002")
+        system_prompt = os.getenv("QA_CHAT_SYSTEM_PROMPT", DEFAULT_QA_CHAT_PROMPT)
+
+        _gemini_model = genai.GenerativeModel(
+            model_name=model_name,
+            system_instruction=system_prompt,
+        )
+
+    return _gemini_model
+
+
+def _convert_history_for_genai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert stored messages to Gemini chat history format."""
+    history: List[Dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        transformed_role = "user" if role == "user" else "model"
+        history.append(
+            {
+                "role": transformed_role,
+                "parts": [msg.get("content", "")],
+            }
+        )
+    return history
+
+
+def _usage_metadata_to_dict(usage: Optional[Any]) -> Optional[Dict[str, Any]]:
+    """Convert Gemini usage metadata into a plain dictionary."""
+    if not usage:
+        return None
+    return {
+        "prompt_token_count": getattr(usage, "prompt_token_count", None),
+        "candidates_token_count": getattr(usage, "candidates_token_count", None),
+        "total_token_count": getattr(usage, "total_token_count", None),
+    }
+
+
+def _generate_follow_up_suggestions(reply_text: str) -> List[str]:
+    """Generate follow-up suggestions based on assistant reply."""
+    reply_lower = (reply_text or "").lower()
+    suggestions: List[str] = []
+
+    if "regression" in reply_lower:
+        suggestions.append("Draft a regression checklist for this release")
+    if "test case" in reply_lower or "testcase" in reply_lower:
+        suggestions.append("Generate detailed test cases with expected results")
+    if "bug" in reply_lower or "defect" in reply_lower:
+        suggestions.append("Outline a defect triage plan")
+
+    # Baseline suggestions to ensure variety
+    baseline = [
+        "Propose automation coverage for this workflow",
+        "Identify high-risk areas that need exploratory testing",
+        "Summarize key QA risks for stakeholders",
+        "Schedule a QA sync with stakeholders",
+    ]
+    for item in baseline:
+        if item not in suggestions:
+            suggestions.append(item)
+
+    # Deduplicate while preserving order
+    seen: set = set()
+    ordered: List[str] = []
+    for suggestion in suggestions:
+        if suggestion not in seen:
+            ordered.append(suggestion)
+            seen.add(suggestion)
+
+    return ordered[:3]
+
+
+def _find_available_port(preferred: int, attempts: int = 10) -> int:
+    """Find an available TCP port starting from the preferred value."""
+    for offset in range(attempts):
+        port_candidate = preferred + offset
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("0.0.0.0", port_candidate))
+                return port_candidate
+            except OSError:
+                continue
+    raise RuntimeError(f"Could not find an open port starting from {preferred}")
+
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -359,6 +560,191 @@ async def health_check():
         "total_test_results": len(test_results),
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.post("/api/v1/qa-tests/chat", response_model=ChatResponse)
+async def chat_with_qa_copilot(request: ChatRequest):
+    """Interact with the Gemini-powered QA copilot."""
+    model = await _ensure_gemini_model()
+
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    session = chat_sessions.setdefault(
+        conversation_id,
+        {
+            "messages": [],
+            "created_at": datetime.utcnow().isoformat(),
+            "persona": request.persona,
+        },
+    )
+
+    if request.history:
+        normalized_history: List[Dict[str, Any]] = []
+        for item in request.history:
+            text = (item.content or "").strip()
+            if not text:
+                continue
+            normalized_history.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "role": item.role,
+                    "content": text,
+                    "timestamp": item.timestamp or datetime.utcnow().isoformat(),
+                }
+            )
+        session["messages"] = normalized_history
+
+    previous_messages = list(session.get("messages", []))
+
+    user_text = (request.message or "").strip()
+    if not user_text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    user_timestamp = datetime.utcnow().isoformat()
+    user_entry = {
+        "id": str(uuid.uuid4()),
+        "role": "user",
+        "content": user_text,
+        "timestamp": user_timestamp,
+    }
+    session.setdefault("messages", []).append(user_entry)
+    session["persona"] = request.persona or session.get("persona")
+    session["updated_at"] = user_timestamp
+
+    chat = model.start_chat(history=_convert_history_for_genai(previous_messages))
+
+    try:
+        ai_response = await asyncio.to_thread(chat.send_message, user_text)
+    except Exception as exc:
+        # Rollback user entry on failure
+        session["messages"].pop()
+        raise HTTPException(status_code=500, detail=f"Gemini request failed: {exc}") from exc
+
+    reply_text = getattr(ai_response, "text", "") or ""
+    if not reply_text:
+        text_parts: List[str] = []
+        for candidate in getattr(ai_response, "candidates", []) or []:
+            content = getattr(candidate, "content", None)
+            if content and getattr(content, "parts", None):
+                for part in content.parts:
+                    part_text = getattr(part, "text", None)
+                    if part_text:
+                        text_parts.append(part_text)
+        reply_text = "\n".join(text_parts).strip()
+
+    if not reply_text:
+        reply_text = "I'm sorry, I couldn't generate a response. Could you rephrase the request?"
+
+    reply_timestamp = datetime.utcnow().isoformat()
+    assistant_entry = {
+        "id": str(uuid.uuid4()),
+        "role": "assistant",
+        "content": reply_text,
+        "timestamp": reply_timestamp,
+    }
+    session["messages"].append(assistant_entry)
+    session["updated_at"] = reply_timestamp
+
+    usage = _usage_metadata_to_dict(getattr(ai_response, "usage_metadata", None))
+    suggestions = _generate_follow_up_suggestions(reply_text)
+
+    return ChatResponse(
+        conversation_id=conversation_id,
+        reply=ChatReply(**assistant_entry),
+        usage=usage,
+        suggestions=suggestions,
+    )
+
+
+@app.post("/api/v1/qa-tests/chat/call", response_model=CallResponsePayload)
+async def schedule_qa_call(request: CallRequestPayload):
+    """Create a lightweight QA consultation call session."""
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    topic = (request.topic or "QA collaboration sync").strip()
+    status = "scheduled"
+
+    if "critical" in topic.lower() or (request.notes and "blocker" in request.notes.lower()):
+        status = "expedited"
+
+    scheduled_dt = request.preferred_time
+    if not scheduled_dt:
+        scheduled_dt = (datetime.utcnow() + timedelta(minutes=15)).isoformat()
+
+    call_id = str(uuid.uuid4())
+    join_url = f"https://qa-agent.calls/{call_id}"
+    dial_in = "+1-555-0137"
+
+    entry = {
+        "call_id": call_id,
+        "conversation_id": conversation_id,
+        "status": status,
+        "topic": topic,
+        "scheduled_for": scheduled_dt,
+        "duration_minutes": request.duration_minutes,
+        "mode": request.mode,
+        "participants": request.participants or ["QA Engineer", "You"],
+        "join_url": join_url,
+        "dial_in": dial_in,
+        "summary": request.notes,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+
+    call_sessions[call_id] = entry
+
+    # Track call summary alongside the conversation if it exists
+    session = chat_sessions.get(conversation_id)
+    if session is not None:
+        session.setdefault("calls", []).append(entry)
+        call_message = {
+            "id": str(uuid.uuid4()),
+            "role": "assistant",
+            "content": (
+                f"I've booked a {request.mode} call about **{topic}** for {scheduled_dt}. "
+                f"Join via {join_url} or dial {dial_in}. I'll circulate notes after the sync."
+            ),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        session.setdefault("messages", []).append(call_message)
+    else:
+        chat_sessions[conversation_id] = {
+            "messages": [],
+            "created_at": datetime.utcnow().isoformat(),
+            "calls": [entry],
+        }
+
+    return CallResponsePayload(
+        call_id=call_id,
+        conversation_id=conversation_id,
+        status=status,
+        topic=topic,
+        scheduled_for=scheduled_dt,
+        duration_minutes=request.duration_minutes,
+        mode=request.mode,
+        participants=entry["participants"],
+        join_url=join_url,
+        dial_in=dial_in,
+        summary=entry.get("summary"),
+    )
+
+
+@app.get("/api/v1/qa-tests/chat/call/{call_id}", response_model=CallStatusPayload)
+async def get_call_status(call_id: str):
+    """Retrieve the status of a previously scheduled call."""
+    call = call_sessions.get(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    return CallStatusPayload(
+        call_id=call_id,
+        status=call["status"],
+        topic=call["topic"],
+        scheduled_for=call["scheduled_for"],
+        duration_minutes=call["duration_minutes"],
+        mode=call["mode"],
+        participants=call["participants"],
+        join_url=call["join_url"],
+        dial_in=call["dial_in"],
+        summary=call.get("summary"),
+    )
 
 
 @app.get("/api/v1/qa-tests/agent-status")
@@ -1218,12 +1604,18 @@ async def list_test_results(limit: int = 50):
 if __name__ == "__main__":
     import uvicorn
 
+    host = os.getenv("QA_AGENT_HOST", "0.0.0.0")
+    preferred_port = int(os.getenv("QA_AGENT_PORT", os.getenv("PORT", "8000")))
+    port = _find_available_port(preferred_port)
+
     print("=" * 60)
     print("QA Agent Backend - Standalone Version")
     print("=" * 60)
-    print(f"API: http://localhost:8000")
-    print(f"Docs: http://localhost:8000/docs")
+    if port != preferred_port:
+        print(f"Preferred port {preferred_port} unavailable. Using fallback port {port}.")
+    print(f"API: http://{host if host != '0.0.0.0' else 'localhost'}:{port}")
+    print(f"Docs: http://{host if host != '0.0.0.0' else 'localhost'}:{port}/docs")
     print(f"Frontend: http://localhost:3000")
     print("=" * 60)
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")

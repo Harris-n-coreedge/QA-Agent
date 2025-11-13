@@ -99,4 +99,32 @@ export const healthAPI = {
   },
 }
 
+export const chatAPI = {
+  sendMessage: async ({ conversationId, message, history = [], persona = null }) => {
+    const response = await apiClient.post('/qa-tests/chat', {
+      conversation_id: conversationId,
+      message,
+      history,
+      persona,
+    })
+    return response.data
+  },
+  startCall: async ({ conversationId, topic, participants = [], preferredTime = null, mode = 'voice', durationMinutes = 30, notes = null }) => {
+    const response = await apiClient.post('/qa-tests/chat/call', {
+      conversation_id: conversationId,
+      topic,
+      participants,
+      preferred_time: preferredTime,
+      duration_minutes: durationMinutes,
+      mode,
+      notes,
+    })
+    return response.data
+  },
+  getCallStatus: async (callId) => {
+    const response = await apiClient.get(`/qa-tests/chat/call/${callId}`)
+    return response.data
+  },
+}
+
 export default apiClient

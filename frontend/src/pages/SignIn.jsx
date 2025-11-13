@@ -27,7 +27,7 @@ export default function SignIn() {
       }
       
       // Navigate to dashboard
-      navigate('/')
+      navigate('/dashboard')
     } catch (err) {
       setError(err.message || 'Invalid email or password')
     } finally {

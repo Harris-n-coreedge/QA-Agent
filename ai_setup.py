@@ -157,11 +157,11 @@ def test_ai_connection():
         try:
             import anthropic
             client = anthropic.Anthropic(api_key=anthropic_key)
-            print("✅ Anthropic connection successful")
+            print("Anthropic connection successful")
         except Exception as e:
-            print(f"❌ Anthropic connection failed: {e}")
+            print(f"Anthropic connection failed: {e}")
     else:
-        print("⏭️ Anthropic not configured")
+        print("Anthropic not configured")
     
     # Test Google
     google_key = os.getenv("GOOGLE_API_KEY")
@@ -169,41 +169,41 @@ def test_ai_connection():
         try:
             import google.generativeai as genai
             genai.configure(api_key=google_key)
-            print("✅ Google connection successful")
+            print("Google connection successful")
         except Exception as e:
-            print(f"❌ Google connection failed: {e}")
+            print(f"Google connection failed: {e}")
     else:
-        print("⏭️ Google not configured")
+        print("Google not configured")
 
 
 def show_usage_examples():
-    
+
     """Show usage examples for the AI agent."""
-    print("\n💡 Usage Examples")
+    print("\n Usage Examples")
     print("-" * 16)
     print("Once you have API keys set up, you can use the AI agent like this:")
     print()
-    print("🤖 Basic Commands:")
+    print("Basic Commands:")
     print("   - 'log in'")
     print("   - 'sign up'")
     print("   - 'search for python'")
     print("   - 'scroll down'")
     print("   - 'click the menu'")
     print()
-    print("🧠 Advanced AI Commands:")
+    print("Advanced AI Commands:")
     print("   - 'find all the buttons on this page'")
     print("   - 'navigate to the tutorials section'")
     print("   - 'what can I do here?'")
     print("   - 'click on the first link that says learn'")
     print("   - 'scroll to the bottom and click contact'")
     print()
-    print("🚀 Run the agent:")
+    print("Run the agent:")
     print("   python ai_powered_qa_agent.py")
     print("   python multi_ai_qa_agent.py")
 
 
 if __name__ == "__main__":
-    print("🤖 AI-Powered QA Agent Setup")
+    print("AI-Powered QA Agent Setup")
     print("=" * 35)
     print()
     

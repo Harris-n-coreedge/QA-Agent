@@ -1,51 +1,102 @@
 import { useMemo } from 'react'
 
 export function SimpleBarChart({ data, colors = ['#64748b', '#475569', '#334155'] }) {
-  const maxValue = Math.max(...data.map(d => d.value), 1)
+  const maxValue = Math.max(
+    ...data.map(d => (d.value || 0) + (d.value2 || 0)),
+    1
+  )
   const chartHeight = 200
   const barWidth = 100 / data.length
 
   return (
     <svg viewBox="0 0 400 200" className="w-full h-full" preserveAspectRatio="none">
       {data.map((item, index) => {
-        const barHeight = (item.value / maxValue) * chartHeight
+        const primaryValue = item.value || 0
+        const secondaryValue = item.value2 || 0
+        const primaryColor = colors[0] || '#64748b'
+        const secondaryColor = colors[1] || colors[0] || '#475569'
+        const totalValue = primaryValue + secondaryValue
+
+        const primaryHeight = (primaryValue / maxValue) * chartHeight
+        const secondaryHeight = (secondaryValue / maxValue) * chartHeight
+        const totalHeight = primaryHeight + secondaryHeight
+
         const x = (index * 400) / data.length
-        const y = chartHeight - barHeight
-        const color = colors[index % colors.length]
+        const yPrimary = chartHeight - primaryHeight
+        const ySecondary = chartHeight - totalHeight
+        const totalLabelY = chartHeight - totalHeight - 5
+
+        const gradientIdPrimary = `gradient-${index}`
+        const gradientIdSecondary = `gradient-${index}-secondary`
 
         return (
           <g key={index}>
             <defs>
-              <linearGradient id={`gradient-${index}`} x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor={color} stopOpacity="0.8" />
-                <stop offset="100%" stopColor={color} stopOpacity="0.4" />
+              <linearGradient id={gradientIdPrimary} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor={primaryColor} stopOpacity="0.85" />
+                <stop offset="100%" stopColor={primaryColor} stopOpacity="0.45" />
+              </linearGradient>
+              <linearGradient id={gradientIdSecondary} x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor={secondaryColor} stopOpacity="0.85" />
+                <stop offset="100%" stopColor={secondaryColor} stopOpacity="0.45" />
               </linearGradient>
             </defs>
-            <rect
-              x={x + 10}
-              y={y}
-              width={(400 / data.length) - 20}
-              height={barHeight}
-              fill={`url(#gradient-${index})`}
-              rx="4"
-              className="transition-all duration-500 hover:opacity-80"
-              style={{ transformOrigin: 'bottom' }}
-            >
-              <animate
-                attributeName="height"
-                from="0"
-                to={barHeight}
-                dur="0.8s"
-                fill="freeze"
-              />
-              <animate
-                attributeName="y"
-                from={chartHeight}
-                to={y}
-                dur="0.8s"
-                fill="freeze"
-              />
-            </rect>
+            {secondaryValue > 0 && (
+              <rect
+                x={x + 10}
+                y={ySecondary}
+                width={(400 / data.length) - 20}
+                height={secondaryHeight}
+                fill={`url(#${gradientIdSecondary})`}
+                rx="4"
+                className="transition-all duration-500 hover:opacity-80"
+                style={{ transformOrigin: 'bottom' }}
+              >
+                <animate
+                  attributeName="height"
+                  from="0"
+                  to={secondaryHeight}
+                  dur="0.8s"
+                  begin="0.05s"
+                  fill="freeze"
+                />
+                <animate
+                  attributeName="y"
+                  from={chartHeight}
+                  to={ySecondary}
+                  dur="0.8s"
+                  begin="0.05s"
+                  fill="freeze"
+                />
+              </rect>
+            )}
+            {primaryValue > 0 && (
+              <rect
+                x={x + 10}
+                y={yPrimary}
+                width={(400 / data.length) - 20}
+                height={primaryHeight}
+                fill={`url(#${gradientIdPrimary})`}
+                rx="4"
+                className="transition-all duration-500 hover:opacity-90"
+                style={{ transformOrigin: 'bottom' }}
+              >
+                <animate
+                  attributeName="height"
+                  from="0"
+                  to={primaryHeight}
+                  dur="0.8s"
+                  fill="freeze"
+                />
+                <animate
+                  attributeName="y"
+                  from={chartHeight}
+                  to={yPrimary}
+                  dur="0.8s"
+                  fill="freeze"
+                />
+              </rect>
+            )}
             <text
               x={x + 400 / data.length / 2}
               y={chartHeight + 15}
@@ -58,13 +109,13 @@ export function SimpleBarChart({ data, colors = ['#64748b', '#475569', '#334155'
             </text>
             <text
               x={x + 400 / data.length / 2}
-              y={y - 5}
+              y={totalLabelY}
               fill="#e2e8f0"
               fontSize="11"
               textAnchor="middle"
               className="font-semibold"
             >
-              {item.value}
+              {totalValue}
             </text>
           </g>
         )

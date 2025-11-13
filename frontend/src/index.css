@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,600;1,700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -440,17 +440,24 @@ body::before {
 }
 
 @layer components {
+  .font-serif {
+    font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  }
+
   /* Button Styles */
   .btn {
-    @apply px-4 py-2.5 rounded-lg font-semibold text-sm transition-all duration-200;
-    @apply focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-950;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    @apply inline-flex items-center justify-center font-semibold text-sm transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-purple-500/60;
     gap: 0.5rem;
     position: relative;
     overflow: hidden;
-    min-height: 40px;
+    min-height: 44px;
+    border-radius: 9999px;
+    padding: 0.625rem 1.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #f9fafb;
+    backdrop-filter: blur(12px);
   }
 
   .btn::before {
@@ -470,9 +477,9 @@ body::before {
 
   .btn-primary {
     @apply text-white;
-    background: var(--primary);
-    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
-    border: 1px solid var(--primary-dark);
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.95), rgba(99, 102, 241, 0.9));
+    border-color: transparent;
+    box-shadow: 0 10px 30px rgba(107, 70, 193, 0.35);
   }
 
   .light .btn-primary {
@@ -481,10 +488,9 @@ body::before {
   }
 
   .btn-primary:hover {
-    background: var(--primary-light);
-    box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.95), rgba(129, 140, 248, 0.95));
+    box-shadow: 0 14px 36px rgba(129, 140, 248, 0.45);
     transform: translateY(-1px);
-    border-color: var(--primary);
   }
 
   .light .btn-primary:hover {
@@ -503,54 +509,61 @@ body::before {
   }
 
   .btn-secondary {
-    @apply text-white border;
-    background: var(--bg-tertiary);
-    border-color: var(--border-color);
-    backdrop-filter: blur(10px);
+    @apply text-white/80;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.16);
   }
 
   .btn-secondary:hover {
-    background: var(--bg-secondary);
-    border-color: var(--text-tertiary);
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.22);
   }
 
   .btn-ghost {
-    @apply bg-transparent text-slate-300 hover:bg-slate-800 hover:text-white;
-    @apply border border-slate-700;
+    @apply text-white/70;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(8px);
+  }
+
+  .btn-ghost:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.08);
   }
 
   /* Card Styles - Deepgram style */
   .card {
-    @apply rounded-lg border;
-    background: var(--card-bg);
-    border-color: var(--card-border);
-    box-shadow: 
-      0 1px 3px rgba(0, 0, 0, 0.12),
-      0 1px 2px rgba(0, 0, 0, 0.24);
+    border-radius: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(10, 10, 10, 0.72);
+    box-shadow:
+      0 25px 80px rgba(96, 52, 221, 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     overflow: hidden;
   }
 
   .dark .card {
-    box-shadow: 
-      0 1px 3px rgba(0, 0, 0, 0.5),
-      0 1px 2px rgba(0, 0, 0, 0.3);
+    box-shadow:
+      0 25px 80px rgba(96, 52, 221, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 
   .card:hover {
-    border-color: rgba(139, 92, 246, 0.3);
-    box-shadow: 
-      0 4px 12px rgba(0, 0, 0, 0.15),
-      0 2px 4px rgba(0, 0, 0, 0.1);
+    border-color: rgba(168, 85, 247, 0.45);
+    box-shadow:
+      0 30px 120px rgba(129, 70, 255, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
     transform: translateY(-1px);
   }
 
   .dark .card:hover {
-    box-shadow: 
-      0 4px 12px rgba(0, 0, 0, 0.4),
-      0 2px 4px rgba(0, 0, 0, 0.2);
-    border-color: rgba(139, 92, 246, 0.4);
+    box-shadow:
+      0 30px 120px rgba(129, 70, 255, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    border-color: rgba(168, 85, 247, 0.5);
   }
 
   .card-stat {
@@ -1077,6 +1090,12 @@ body::before {
 
   .section-description {
     @apply text-sm text-slate-400 mb-6;
+  }
+
+  .landing-input {
+    @apply w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white placeholder:text-white/40 transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-purple-500/60 focus:border-transparent;
+    backdrop-filter: blur(12px);
   }
 }
 
