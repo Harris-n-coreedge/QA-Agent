@@ -7,6 +7,10 @@ import { TestComparison } from '../components/TestComparison'
 import { TestHistory } from '../components/TestHistory'
 import { ScreenshotGallery } from '../components/ScreenshotGallery'
 import { TestTags, TagFilter } from '../components/TestTags'
+import MetricCard from '../components/Visualizations/MetricCard'
+import LineChart from '../components/Visualizations/LineChart'
+import BarChartComponent from '../components/Visualizations/BarChart'
+import HistogramChart from '../components/Visualizations/HistogramChart'
 
 const normalizeResultText = (value) => {
   if (value == null) return ''
@@ -22,6 +26,15 @@ const normalizeResultText = (value) => {
 }
 
 function TestResultCard({ result }) {
+  // Add safety check for result
+  if (!result) {
+    return (
+      <div className="card p-6 border-yellow-500/40 bg-yellow-500/15">
+        <p className="text-yellow-200">Invalid test result data</p>
+      </div>
+    )
+  }
+  
   const [lightbox, setLightbox] = useState({ open: false, src: '' })
   const { exportTestResult } = usePDFExporter()
   
@@ -51,7 +64,7 @@ function TestResultCard({ result }) {
         <div className="flex-1">
           <div className="flex items-start justify-between mb-6 gap-6">
             <h3 className="text-3xl font-bold text-gradient text-glow flex-1">
-              {result.command}
+              {result.command || result.test_name || 'Test Result'}
             </h3>
             <span className={`badge ${statusColors[result.status]} hover:scale-105 transition-transform duration-500 px-4 py-2 text-sm font-semibold tracking-wide uppercase whitespace-nowrap flex-shrink-0`}>
               {result.status === 'passed' ? 'PASSED' : 
@@ -70,33 +83,250 @@ function TestResultCard({ result }) {
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-sm mb-8">
-            <div className="bg-gradient-to-br from-white/10 to-white/5 p-6 rounded-2xl border border-white/15 shadow-xl">
+          {/* Status Cards - Matching the image design */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700/50 shadow-xl">
               <p className="text-white/70 text-sm mb-2 font-bold tracking-wide uppercase">Started</p>
-              <p className="text-white font-bold text-lg">{new Date(result.started_at).toLocaleString()}</p>
+              <p className="text-white font-bold text-xl">
+                {result.started_at ? new Date(result.started_at).toLocaleString('en-US', {
+                  month: '2-digit',
+                  day: '2-digit',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                }) : 'N/A'}
+              </p>
             </div>
             {result.completed_at && (
-              <div className="bg-gradient-to-br from-white/10 to-white/5 p-6 rounded-2xl border border-white/15 shadow-xl">
+              <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700/50 shadow-xl">
                 <p className="text-white/70 text-sm mb-2 font-bold tracking-wide uppercase">Completed</p>
-                <p className="text-white font-bold text-lg">{new Date(result.completed_at).toLocaleString()}</p>
+                <p className="text-white font-bold text-xl">
+                  {new Date(result.completed_at).toLocaleString('en-US', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                  })}
+                </p>
               </div>
             )}
             {result.duration_ms && (
-              <div className="bg-gradient-to-br from-emerald-500/15 to-green-500/10 p-6 rounded-2xl border border-emerald-500/30 shadow-xl">
-                <p className="text-emerald-300 text-sm mb-2 font-bold tracking-wide uppercase">Duration</p>
-                <p className="text-emerald-200 font-black text-lg font-mono">{result.duration_ms.toFixed(0)}ms</p>
+              <div className="bg-teal-500/10 p-6 rounded-2xl border border-teal-500/20 shadow-xl">
+                <p className="text-teal-300 text-sm mb-2 font-bold tracking-wide uppercase">Duration</p>
+                <p className="text-teal-300 font-bold text-xl font-mono">{Math.round(result.duration_ms)}ms</p>
               </div>
             )}
-            <div className="bg-gradient-to-br from-indigo-500/15 to-blue-500/10 p-6 rounded-2xl border border-indigo-500/30 shadow-xl">
-              <p className="text-indigo-300 text-sm mb-2 font-bold tracking-wide uppercase">Test ID</p>
-              <p className="text-indigo-200 font-mono text-lg font-bold">{result.test_id.slice(0, 8)}</p>
+            <div className="bg-purple-500/10 p-6 rounded-2xl border border-purple-500/20 shadow-xl">
+              <p className="text-purple-300 text-sm mb-2 font-bold tracking-wide uppercase">Test ID</p>
+              <p className="text-purple-300 font-mono text-xl font-bold">{result.test_id?.slice(0, 8) || 'N/A'}</p>
             </div>
           </div>
 
-          {result.result && (
-            <div className="bg-gradient-to-br from-white/10 to-white/5 p-8 rounded-3xl border border-white/15 shadow-xl">
+          {/* Visualizations Section - for standardized test results */}
+          {result.visualizations && Object.keys(result.visualizations).length > 0 && (
+            <div className="mb-8 space-y-6">
+              <h4 className="text-xl font-bold text-white mb-4">Visualizations</h4>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {Object.entries(result.visualizations).map(([key, viz]) => {
+                  try {
+                    if (!viz || !viz.type || !viz.data) return null
+                    
+                    if (viz.type === 'line' && Array.isArray(viz.data) && viz.data.length > 0) {
+                      return <LineChart key={key} data={viz.data} title={viz.title || key} />
+                    } else if (viz.type === 'bar' && Array.isArray(viz.data) && viz.data.length > 0) {
+                      return <BarChartComponent key={key} data={viz.data} title={viz.title || key} />
+                    } else if (viz.type === 'histogram' && Array.isArray(viz.data) && viz.data.length > 0) {
+                      return <HistogramChart key={key} data={viz.data} title={viz.title || key} />
+                    }
+                    return null
+                  } catch (error) {
+                    console.error(`Error rendering visualization ${key}:`, error)
+                    return null
+                  }
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Summary Section */}
+          {result.summary && Object.keys(result.summary).length > 0 && (
+            <div className="mb-8">
+              <h4 className="text-xl font-bold text-white mb-4">Summary</h4>
+              
+              {/* Human-readable summary text if available */}
+              {result.summary.summary_text && (
+                <div className="bg-gradient-to-br from-white/10 to-white/5 p-6 rounded-2xl border border-white/15 shadow-xl mb-6">
+                  <div className="text-white/90 whitespace-pre-wrap leading-relaxed space-y-4">
+                    {result.summary.summary_text.split('\n').map((line, idx) => {
+                      // Handle section headers (##)
+                      if (line.startsWith('## ')) {
+                        return (
+                          <h2 key={idx} className="text-xl font-bold text-emerald-300 mt-6 mb-3 first:mt-0">
+                            {line.replace('## ', '')}
+                          </h2>
+                        )
+                      }
+                      // Handle bold text with colons (## Title)
+                      if (line.includes('**') && line.includes(':')) {
+                        const parts = line.split('**')
+                        return (
+                          <p key={idx} className="mb-2">
+                            {parts.map((part, pIdx) => {
+                              if (pIdx % 2 === 1) {
+                                // Bold text
+                                return <strong key={pIdx} className="text-white font-semibold">{part}</strong>
+                              }
+                              return <span key={pIdx}>{part}</span>
+                            })}
+                          </p>
+                        )
+                      }
+                      // Handle bullet points (•)
+                      if (line.trim().startsWith('•')) {
+                        const match = line.match(/• \*\*(.*?)\*\* — (.*)/)
+                        if (match) {
+                          return (
+                            <li key={idx} className="mb-2 ml-4">
+                              <strong className="text-emerald-300">{match[1]}</strong>
+                              {' — '}
+                              <span className="text-white/80">{match[2]}</span>
+                            </li>
+                          )
+                        }
+                      }
+                      // Regular text
+                      if (line.trim()) {
+                        return <p key={idx} className="mb-1">{line}</p>
+                      }
+                      // Empty line
+                      return <br key={idx} />
+                    })}
+                  </div>
+                </div>
+              )}
+              
+              {/* Summary Metrics Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {Object.entries(result.summary || {})
+                  .filter(([key]) => key !== 'summary_text') // Exclude summary_text from cards
+                  .filter(([key, value]) => value != null && value !== undefined) // Filter out null/undefined
+                  .map(([key, value]) => {
+                    let color = 'slate'
+                    let unit = ''
+                    
+                    // Determine color and unit based on metric type
+                    if (key.includes('time') || key.includes('duration')) {
+                      color = 'teal'
+                      unit = 'ms'
+                    } else if (key.includes('rate') || key.includes('percent')) {
+                      color = 'emerald'
+                      unit = '%'
+                    } else if (key.includes('error') || key.includes('fail')) {
+                      color = 'rose'
+                    } else if (key.includes('request') || key.includes('rps')) {
+                      color = 'amber'
+                      if (key.includes('rps')) unit = '/s'
+                    } else if (key.includes('success')) {
+                      color = 'emerald'
+                    }
+                    
+                    // Format key for display
+                    const displayKey = key
+                      .replace(/_/g, ' ')
+                      .replace(/\b\w/g, l => l.toUpperCase())
+                    
+                    // Handle null/undefined values
+                    if (value == null || value === undefined) {
+                      return null // Don't render cards with null values
+                    }
+                    
+                    // Handle boolean values
+                    let displayValue = value
+                    if (typeof value === 'boolean') {
+                      displayValue = value ? 'Yes' : 'No'
+                    } else if (typeof value === 'number') {
+                      displayValue = value.toFixed(2)
+                    } else if (typeof value === 'object') {
+                      // Skip objects and arrays - they're handled separately
+                      return null
+                    }
+                    
+                    return (
+                      <MetricCard
+                        key={key}
+                        label={displayKey}
+                        value={displayValue}
+                        unit={unit}
+                        color={color}
+                      />
+                    )
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* Metrics Section - for detailed metrics */}
+          {result.metrics && Object.keys(result.metrics).length > 0 && (
+            <div className="mb-8">
+              <h4 className="text-xl font-bold text-white mb-4">Metrics</h4>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {Object.entries(result.metrics).map(([key, value]) => {
+                  if (Array.isArray(value)) return null // Skip arrays, they're handled separately
+                  if (value == null || value === undefined) return null // Skip null/undefined values
+                  if (typeof value === 'object') return null // Skip objects, they're handled separately
+                  
+                  let color = 'slate'
+                  let unit = ''
+                  
+                  if (key.includes('time') || key.includes('duration')) {
+                    color = 'teal'
+                    unit = 'ms'
+                  } else if (key.includes('rate') || key.includes('percent')) {
+                    color = 'emerald'
+                    unit = '%'
+                  } else if (key.includes('error') || key.includes('fail')) {
+                    color = 'rose'
+                  } else if (key.includes('request') || key.includes('rps')) {
+                    color = 'amber'
+                    if (key.includes('rps')) unit = '/s'
+                  } else if (key.includes('certificate') && typeof value === 'boolean') {
+                    color = value ? 'emerald' : 'rose'
+                  }
+                  
+                  const displayKey = key
+                    .replace(/_/g, ' ')
+                    .replace(/\b\w/g, l => l.toUpperCase())
+                  
+                  // Handle boolean values
+                  let displayValue = value
+                  if (typeof value === 'boolean') {
+                    displayValue = value ? 'Yes' : 'No'
+                  } else if (typeof value === 'number') {
+                    displayValue = value.toFixed(2)
+                  }
+                  
+                  return (
+                    <MetricCard
+                      key={key}
+                      label={displayKey}
+                      value={displayValue}
+                      unit={unit}
+                      color={color}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Output Section - User-friendly display */}
+          {(result.result || result.raw_data) && (
+            <div className="bg-gradient-to-br from-white/10 to-white/5 p-8 rounded-3xl border border-white/15 shadow-xl mb-6">
               <div className="flex items-center justify-between mb-4">
-                <h4 className="text-lg font-bold text-emerald-300">Result:</h4>
+                <h4 className="text-lg font-bold text-emerald-300">Output:</h4>
                 <button
                   onClick={() => {
                     try {
@@ -137,35 +367,67 @@ function TestResultCard({ result }) {
               </div>
               <div className="bg-black/50 p-6 rounded-2xl border border-white/10 overflow-x-auto">
                 {(() => {
-                  const rawResult = result.result
+                  // Prefer raw_data if available (from standardized results), otherwise use result
+                  const rawResult = result.raw_data || result.result
                   const resultString = normalizeResultText(rawResult)
+                  
                   try {
                     const parsed = JSON.parse(resultString)
-                    if (parsed.text && parsed.structured) {
-                      // Structured result - show both
+                    
+                    // If it's a standardized test result, display it nicely
+                    if (result.test_type && (result.metrics || result.summary)) {
                       return (
                         <div className="space-y-4">
-                          <details className="bg-black/30 border border-white/10 rounded-lg p-4">
-                            <summary className="text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
-                              📊 Structured Data (Click to expand)
-                            </summary>
-                            <pre className="text-cyan-300 whitespace-pre-wrap leading-relaxed text-xs font-mono mt-2 max-h-[400px] overflow-y-auto">
-                              {JSON.stringify(parsed.structured, null, 2)}
-                            </pre>
-                          </details>
-                          <details open className="bg-black/30 border border-white/10 rounded-lg p-4">
-                            <summary className="flex items-center gap-2 text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
-                              <FileText className="w-4 h-4 text-slate-400" />
-                              <span>Text Output (Click to collapse)</span>
-                            </summary>
-                            <pre className="text-white/90 whitespace-pre-wrap leading-relaxed text-sm font-mono mt-2 max-h-[400px] overflow-y-auto">
-                              {parsed.text}
-                            </pre>
-                          </details>
+                          <div className="bg-black/30 border border-white/10 rounded-lg p-4">
+                            <h5 className="text-white/90 font-semibold mb-3">Test Information</h5>
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <span className="text-white/70">Test Type:</span>
+                                <span className="text-white ml-2 font-mono">{result.test_type}</span>
+                              </div>
+                              <div>
+                                <span className="text-white/70">Test Name:</span>
+                                <span className="text-white ml-2">{result.test_name || 'N/A'}</span>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {parsed.text && parsed.structured ? (
+                            <div className="space-y-4">
+                              <details className="bg-black/30 border border-white/10 rounded-lg p-4">
+                                <summary className="text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
+                                  📊 Structured Data (Click to expand)
+                                </summary>
+                                <pre className="text-cyan-300 whitespace-pre-wrap leading-relaxed text-xs font-mono mt-2 max-h-[400px] overflow-y-auto">
+                                  {JSON.stringify(parsed.structured, null, 2)}
+                                </pre>
+                              </details>
+                              <details open className="bg-black/30 border border-white/10 rounded-lg p-4">
+                                <summary className="flex items-center gap-2 text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
+                                  <FileText className="w-4 h-4 text-slate-400" />
+                                  <span>Text Output (Click to collapse)</span>
+                                </summary>
+                                <pre className="text-white/90 whitespace-pre-wrap leading-relaxed text-sm font-mono mt-2 max-h-[400px] overflow-y-auto">
+                                  {parsed.text}
+                                </pre>
+                              </details>
+                            </div>
+                          ) : (
+                            <details open className="bg-black/30 border border-white/10 rounded-lg p-4">
+                              <summary className="flex items-center gap-2 text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
+                                <FileText className="w-4 h-4 text-slate-400" />
+                                <span>Raw Data (Click to collapse)</span>
+                              </summary>
+                              <pre className="text-cyan-300 whitespace-pre-wrap leading-relaxed text-sm font-mono mt-2 max-h-[600px] overflow-y-auto">
+                                {JSON.stringify(parsed, null, 2)}
+                              </pre>
+                            </details>
+                          )}
                         </div>
                       )
                     }
-                    // Valid JSON but not structured format
+                    
+                    // Valid JSON but not standardized format
                     return (
                       <pre className="text-cyan-300 whitespace-pre-wrap leading-relaxed text-sm font-mono max-h-[600px] overflow-y-auto">
                         {JSON.stringify(parsed, null, 2)}
@@ -259,56 +521,67 @@ function TestResults() {
     queryKey: ['test-results', limit],
     queryFn: () => testResultsAPI.list(limit),
     refetchInterval: 3000,
+    retry: 2,
+    onError: (error) => {
+      console.error('Error fetching test results:', error)
+    }
   })
 
   // Filter and sort results
   const filteredResults = useMemo(() => {
-    if (!results?.results) return []
+    try {
+      if (!results?.results) return []
     
-    let filtered = [...results.results]
-    
-    // Search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      filtered = filtered.filter(r => 
-        r.command?.toLowerCase().includes(query) ||
-        normalizeResultText(r.result).toLowerCase().includes(query) ||
-        r.test_id?.toLowerCase().includes(query)
-      )
-    }
-    
-    // Status filter
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(r => r.status === statusFilter)
-    }
-    
-    // Test type filter
-    if (testTypeFilter !== 'all') {
-      filtered = filtered.filter(r => {
-        const cmd = (r.command || '').toLowerCase()
-        if (testTypeFilter === 'auto-check') return cmd.includes('auto check') || cmd.includes('auto-check')
-        if (testTypeFilter === 'auto-audit') return cmd.includes('auto audit') || cmd.includes('auto-audit')
-        if (testTypeFilter === 'browser-use') return cmd.includes('test case') || cmd.includes('verify') || cmd.includes('check')
-        if (testTypeFilter === 'mobile') return r.device || r.screenshots?.length > 0
-        if (testTypeFilter === 'cross-browser') return cmd.includes('cross-browser') || cmd.includes('cross browser')
-        return true
-      })
-    }
-    
-    // Sort
-    filtered.sort((a, b) => {
-      if (sortBy === 'date') {
-        return new Date(b.started_at) - new Date(a.started_at)
-      } else if (sortBy === 'duration') {
-        return (b.duration_ms || 0) - (a.duration_ms || 0)
-      } else if (sortBy === 'status') {
-        const statusOrder = { passed: 1, completed: 2, failed: 3, running: 4, pending: 5 }
-        return (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99)
+      let filtered = [...results.results]
+      
+      // Search filter
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase()
+        filtered = filtered.filter(r => 
+          (r.command || r.test_name || '').toLowerCase().includes(query) ||
+          normalizeResultText(r.result).toLowerCase().includes(query) ||
+          (r.test_id || '').toLowerCase().includes(query)
+        )
       }
-      return 0
-    })
-    
-    return filtered
+      
+      // Status filter
+      if (statusFilter !== 'all') {
+        filtered = filtered.filter(r => r.status === statusFilter)
+      }
+      
+      // Test type filter
+      if (testTypeFilter !== 'all') {
+        filtered = filtered.filter(r => {
+          const cmd = (r.command || r.test_name || '').toLowerCase()
+          if (testTypeFilter === 'auto-check') return cmd.includes('auto check') || cmd.includes('auto-check')
+          if (testTypeFilter === 'auto-audit') return cmd.includes('auto audit') || cmd.includes('auto-audit')
+          if (testTypeFilter === 'browser-use') return cmd.includes('test case') || cmd.includes('verify') || cmd.includes('check')
+          if (testTypeFilter === 'mobile') return r.device || r.screenshots?.length > 0
+          if (testTypeFilter === 'cross-browser') return cmd.includes('cross-browser') || cmd.includes('cross browser')
+          return true
+        })
+      }
+      
+      // Sort
+      filtered.sort((a, b) => {
+        if (sortBy === 'date') {
+          const dateA = a.started_at ? new Date(a.started_at) : new Date(0)
+          const dateB = b.started_at ? new Date(b.started_at) : new Date(0)
+          return dateB - dateA
+        } else if (sortBy === 'duration') {
+          return (b.duration_ms || 0) - (a.duration_ms || 0)
+        } else if (sortBy === 'status') {
+          const statusOrder = { passed: 1, completed: 2, failed: 3, running: 4, pending: 5 }
+          return (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99)
+        }
+        return 0
+      })
+      
+      return filtered
+    } catch (error) {
+      console.error('Error filtering test results:', error)
+      return []
+    }
   }, [results?.results, searchQuery, statusFilter, testTypeFilter, sortBy, selectedTags])
 
   // Export functions
@@ -597,11 +870,23 @@ function TestResults() {
         </div>
       ) : filteredResults.length > 0 ? (
         <div className="space-y-8" aria-live="polite">
-          {filteredResults.map((result, idx) => (
-            <div key={result.test_id} style={{ animationDelay: `${idx * 0.1}s` }}>
-              <TestResultCard result={result} />
-            </div>
-          ))}
+          {filteredResults.map((result, idx) => {
+            try {
+              return (
+                <div key={result.test_id || idx} style={{ animationDelay: `${idx * 0.1}s` }}>
+                  <TestResultCard result={result} />
+                </div>
+              )
+            } catch (error) {
+              console.error(`Error rendering test result ${result.test_id}:`, error)
+              return (
+                <div key={result.test_id || idx} className="card p-6 border-red-500/40 bg-red-500/15">
+                  <p className="text-red-200">Error rendering test result: {error.message}</p>
+                  <pre className="text-xs mt-2 text-red-300/80">{JSON.stringify(result, null, 2)}</pre>
+                </div>
+              )
+            }
+          })}
         </div>
       ) : searchQuery || statusFilter !== 'all' || testTypeFilter !== 'all' ? (
         <div className="card text-center py-24 fade-in hover-lift">

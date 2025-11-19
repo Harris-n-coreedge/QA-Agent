@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from enum import Enum
 from contextlib import asynccontextmanager
 import asyncio
@@ -15,6 +15,9 @@ from datetime import datetime
 import uuid
 import sys
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,6 +30,12 @@ commands_executed: int = 0
 test_results: Dict[str, Dict] = {}
 # Store external browsers to keep them alive
 external_browsers: Dict[str, Any] = {}  # Store playwright and browser instances
+
+# Test execution queue system
+test_queue: asyncio.Queue = asyncio.Queue()
+current_test: Optional[str] = None  # test_id currently running
+test_tasks: Dict[str, asyncio.Task] = {}  # Store task references for cancellation
+queue_processor_running: bool = False
 
 
 class AIProvider(str, Enum):
@@ -75,6 +84,145 @@ class CommandResponse(BaseModel):
     status: TestStatus
     executed_at: str
     duration_ms: Optional[float] = None
+
+
+class StandardizedTestResult(BaseModel):
+    """Standardized test result structure for all performance tests"""
+    test_type: str = Field(..., description="Type of test (e.g., 'load_test', 'benchmark', 'stress_test')")
+    test_name: str = Field(..., description="Name of the test")
+    status: TestStatus = Field(..., description="Test execution status")
+    metrics: Dict[str, Any] = Field(default_factory=dict, description="Test-specific metrics")
+    visualizations: Optional[Dict[str, Any]] = Field(default=None, description="Chart data and visualizations")
+    summary: Dict[str, Any] = Field(default_factory=dict, description="Key summary statistics")
+    raw_data: Optional[Dict[str, Any]] = Field(default=None, description="Full test data")
+    started_at: str = Field(..., description="Test start timestamp")
+    completed_at: Optional[str] = Field(default=None, description="Test completion timestamp")
+    duration_ms: float = Field(..., description="Test duration in milliseconds")
+    error: Optional[str] = Field(default=None, description="Error message if test failed")
+    progress: Optional[float] = Field(default=None, description="Progress percentage (0-100)")
+
+
+class PerformanceTestRequest(BaseModel):
+    """Base request for performance tests"""
+    website_url: Optional[str] = Field(default=None, description="Website URL to test")
+    test_name: Optional[str] = Field(default=None, description="Name of the test")
+
+
+class LoadTestRequest(PerformanceTestRequest):
+    """Request for load test"""
+    users: int = Field(default=50, description="Number of concurrent users")
+    duration: int = Field(default=60, description="Test duration in seconds")
+    ramp_up: int = Field(default=10, description="Ramp-up time in seconds")
+    target_url: Optional[str] = Field(default=None, description="Target URL (overrides website_url)")
+
+
+class StressTestRequest(PerformanceTestRequest):
+    """Request for stress test"""
+    max_users: int = Field(default=500, description="Maximum number of users")
+    step_users: int = Field(default=50, description="User increment step")
+    duration: int = Field(default=300, description="Test duration in seconds")
+
+
+class SpikeTestRequest(PerformanceTestRequest):
+    """Request for spike test"""
+    initial_users: int = Field(default=10, description="Initial number of users")
+    spike_users: int = Field(default=200, description="Spike number of users")
+    duration: int = Field(default=120, description="Test duration in seconds")
+
+
+class SoakTestRequest(PerformanceTestRequest):
+    """Request for soak test"""
+    users: int = Field(default=50, description="Number of concurrent users")
+    duration_hours: int = Field(default=1, description="Test duration in hours")
+
+
+class RampUpTestRequest(PerformanceTestRequest):
+    """Request for ramp-up test"""
+    max_users: int = Field(default=100, description="Maximum number of users")
+    ramp_up_time: int = Field(default=60, description="Ramp-up time in seconds")
+    duration: int = Field(default=120, description="Test duration in seconds")
+
+
+class ThroughputTestRequest(PerformanceTestRequest):
+    """Request for throughput test"""
+    target_rps: int = Field(default=100, description="Target requests per second")
+    duration: int = Field(default=60, description="Test duration in seconds")
+
+
+class EndpointPerformanceTestRequest(PerformanceTestRequest):
+    """Request for endpoint performance test"""
+    endpoint: str = Field(..., description="Endpoint to test")
+    users: int = Field(default=50, description="Number of concurrent users")
+    duration: int = Field(default=60, description="Test duration in seconds")
+
+
+class ApiLoadTestRequest(PerformanceTestRequest):
+    """Request for API load test"""
+    users: int = Field(default=50, description="Number of concurrent users")
+    duration: int = Field(default=60, description="Test duration in seconds")
+
+
+class WebsiteLoadTestRequest(PerformanceTestRequest):
+    """Request for website load test"""
+    users: int = Field(default=50, description="Number of concurrent users")
+    duration: int = Field(default=60, description="Test duration in seconds")
+
+
+class VolumeTestRequest(PerformanceTestRequest):
+    """Request for volume test"""
+    users: int = Field(default=100, description="Number of concurrent users")
+    duration: int = Field(default=300, description="Test duration in seconds")
+
+
+class ConcurrentUserTestRequest(PerformanceTestRequest):
+    """Request for concurrent user test"""
+    concurrent_users: int = Field(default=100, description="Number of concurrent users")
+    duration: int = Field(default=60, description="Test duration in seconds")
+
+
+class ResponseTimeDistributionTestRequest(PerformanceTestRequest):
+    """Request for response time distribution test"""
+    users: int = Field(default=50, description="Number of concurrent users")
+    duration: int = Field(default=60, description="Test duration in seconds")
+
+
+# Network test request models
+class NetworkTestRequest(PerformanceTestRequest):
+    """Base request for network tests"""
+    user_permission: bool = Field(default=False, description="User permission for restricted tests")
+    target_url: Optional[str] = Field(default=None, description="Target URL (overrides website_url)")
+
+
+class SslTlsValidationRequest(NetworkTestRequest):
+    """Request for SSL/TLS certificate validation"""
+    pass
+
+
+class DnsSecurityTestRequest(NetworkTestRequest):
+    """Request for DNS security test"""
+    pass
+
+
+class ConnectivityDiagnosticsRequest(NetworkTestRequest):
+    """Request for network connectivity diagnostics"""
+    pass
+
+
+class ProtocolTrafficAnalysisRequest(NetworkTestRequest):
+    """Request for protocol traffic analysis"""
+    duration: int = Field(default=10, description="Capture duration in seconds")
+
+
+class NetworkSecurityScanRequest(NetworkTestRequest):
+    """Request for network security scan"""
+    ports: Optional[List[int]] = Field(default=None, description="List of ports to scan (default: common ports)")
+    scan_type: str = Field(default="stealth", description="Scan type: stealth, tcp, or default")
+
+
+class EndpointDiscoveryRequest(NetworkTestRequest):
+    """Request for endpoint discovery"""
+    discovery_method: str = Field(default="passive", description="Discovery method: passive or active")
+
 
 # Internal helpers for global agent management
 async def _ensure_global_agent() -> bool:
@@ -254,14 +402,828 @@ def _get_agent_status():
     }
 
 
+async def _execute_test_queue():
+    """Background task to process test queue"""
+    global current_test, queue_processor_running, test_tasks
+    
+    queue_processor_running = True
+    
+    while True:
+        try:
+            # Get next test from queue
+            test_item = await test_queue.get()
+            
+            if test_item is None:  # Shutdown signal
+                break
+            
+            test_id, test_type, test_func, test_params = test_item
+            
+            # Update current test
+            current_test = test_id
+            
+            # Update test status to running
+            if test_id in test_results:
+                test_results[test_id]["status"] = TestStatus.running
+                test_results[test_id]["progress"] = 0.0
+            
+            try:
+                # Execute test
+                task = asyncio.create_task(test_func(**test_params))
+                test_tasks[test_id] = task
+                
+                result = await task
+                
+                # Format result into standardized structure
+                completed_at = datetime.utcnow()
+                started_at = datetime.fromisoformat(test_results[test_id]["started_at"])
+                
+                standardized_result = _format_standardized_result(
+                    test_type=test_type,
+                    test_name=test_results[test_id].get("test_name", "Test"),
+                    metrics=result,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    raw_data=result
+                )
+                
+                # Update test results
+                if test_id in test_results:
+                    # Merge standardized result, preserving test_id
+                    test_results[test_id].update(standardized_result)
+                    test_results[test_id]["test_id"] = test_id  # Ensure test_id is preserved
+                    test_results[test_id]["status"] = TestStatus.completed
+                    test_results[test_id]["progress"] = 100.0
+                    
+                    # Log the stored result for debugging
+                    logger.info(f"Stored test result for {test_id}: metrics keys={list(standardized_result.get('metrics', {}).keys())}")
+                    logger.debug(f"Full stored result: {test_results[test_id]}")
+                
+            except asyncio.CancelledError:
+                # Test was cancelled
+                if test_id in test_results:
+                    test_results[test_id]["status"] = TestStatus.cancelled
+                    test_results[test_id]["completed_at"] = datetime.utcnow().isoformat()
+            except Exception as e:
+                # Test failed
+                if test_id in test_results:
+                    test_results[test_id]["status"] = TestStatus.failed
+                    test_results[test_id]["error"] = str(e)
+                    test_results[test_id]["completed_at"] = datetime.utcnow().isoformat()
+                logger.error(f"Test {test_id} failed: {str(e)}")
+            finally:
+                # Clean up
+                current_test = None
+                if test_id in test_tasks:
+                    del test_tasks[test_id]
+                test_queue.task_done()
+                
+        except Exception as e:
+            logger.error(f"Error in test queue processor: {str(e)}")
+            await asyncio.sleep(1)
+    
+    queue_processor_running = False
+
+
+def _format_standardized_result(
+    test_type: str,
+    test_name: str,
+    metrics: Dict[str, Any],
+    started_at: datetime,
+    completed_at: Optional[datetime] = None,
+    error: Optional[str] = None,
+    raw_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Format test results into standardized structure"""
+    duration_ms = 0
+    if completed_at:
+        duration_ms = (completed_at - started_at).total_seconds() * 1000
+    
+    # Create visualizations based on metrics
+    visualizations = _create_visualizations(test_type, metrics)
+    
+    # Create summary
+    summary = _create_summary(test_type, metrics)
+    
+    return {
+        "test_type": test_type,
+        "test_name": test_name,
+        "status": TestStatus.completed if not error else TestStatus.failed,
+        "metrics": metrics,
+        "visualizations": visualizations,
+        "summary": summary,
+        "raw_data": raw_data,
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat() if completed_at else None,
+        "duration_ms": duration_ms,
+        "error": error
+    }
+
+
+def _create_visualizations(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Create visualization data based on test type and metrics"""
+    visualizations = {}
+    
+    if test_type.startswith("load") or test_type.startswith("stress") or test_type.startswith("spike"):
+        # Response time chart
+        if "avg_response_time" in metrics:
+            visualizations["response_time_chart"] = {
+                "type": "line",
+                "data": [
+                    {"time": "0s", "value": metrics.get("min_response_time", 0)},
+                    {"time": "50%", "value": metrics.get("avg_response_time", 0)},
+                    {"time": "100%", "value": metrics.get("max_response_time", 0)}
+                ],
+                "title": "Response Time Distribution"
+            }
+        
+        # Throughput chart
+        if "requests_per_second" in metrics:
+            visualizations["throughput_chart"] = {
+                "type": "bar",
+                "data": [{"label": "RPS", "value": metrics["requests_per_second"]}],
+                "title": "Requests Per Second"
+            }
+    
+    elif test_type.startswith("benchmark"):
+        # Time distribution histogram
+        if "avg_time_ms" in metrics:
+            visualizations["time_distribution"] = {
+                "type": "histogram",
+                "data": [
+                    {"range": "min", "value": metrics.get("min_time_ms", 0)},
+                    {"range": "avg", "value": metrics.get("avg_time_ms", 0)},
+                    {"range": "max", "value": metrics.get("max_time_ms", 0)}
+                ],
+                "title": "Time Distribution"
+            }
+    
+    # Network test visualizations
+    elif test_type.startswith("ssl_tls") or test_type.startswith("ssl") or test_type.startswith("tls"):
+        # SSL/TLS visualizations
+        if "protocol_versions" in metrics and metrics["protocol_versions"]:
+            visualizations["protocol_versions"] = {
+                "type": "bar",
+                "data": [{"label": version, "value": 1} for version in metrics["protocol_versions"]],
+                "title": "Protocol Versions Supported"
+            }
+        
+        if "cipher_suites" in metrics and metrics["cipher_suites"]:
+            # Group cipher suites by strength
+            cipher_strength = {"Weak": 0, "Medium": 0, "Strong": 0}
+            for cipher in metrics["cipher_suites"]:
+                bits = cipher.get("bits", 0)
+                if bits < 128:
+                    cipher_strength["Weak"] += 1
+                elif bits < 256:
+                    cipher_strength["Medium"] += 1
+                else:
+                    cipher_strength["Strong"] += 1
+            
+            visualizations["cipher_strength"] = {
+                "type": "bar",
+                "data": [{"label": strength, "value": count} for strength, count in cipher_strength.items()],
+                "title": "Cipher Suite Strength"
+            }
+    
+    elif test_type.startswith("dns"):
+        # DNS test visualizations
+        if "dns_resolution_times" in metrics:
+            visualizations["dns_resolution_times"] = {
+                "type": "bar",
+                "data": [
+                    {"label": qtype, "value": time or 0} 
+                    for qtype, time in metrics["dns_resolution_times"].items()
+                ],
+                "title": "DNS Resolution Times by Query Type"
+            }
+    
+    elif test_type.startswith("connectivity"):
+        # Connectivity diagnostics visualizations
+        if "ping_times" in metrics and metrics["ping_times"]:
+            visualizations["ping_times"] = {
+                "type": "line",
+                "data": [
+                    {"time": f"Ping {i+1}", "value": time} 
+                    for i, time in enumerate(metrics["ping_times"])
+                ],
+                "title": "Ping Times"
+            }
+        
+        if "connection_tests" in metrics:
+            visualizations["connection_tests"] = {
+                "type": "bar",
+                "data": [
+                    {"label": test, "value": 1 if success else 0} 
+                    for test, success in metrics["connection_tests"].items()
+                ],
+                "title": "Connection Test Results"
+            }
+    
+    elif test_type.startswith("protocol_traffic") or test_type.startswith("protocol"):
+        # Protocol traffic analysis visualizations
+        if "protocol_distribution" in metrics:
+            visualizations["protocol_distribution"] = {
+                "type": "bar",
+                "data": [
+                    {"label": protocol, "value": count} 
+                    for protocol, count in metrics["protocol_distribution"].items()
+                ],
+                "title": "Protocol Distribution"
+            }
+        
+        if "packet_sizes" in metrics and metrics["packet_sizes"]:
+            # Create histogram data
+            size_ranges = {"0-100": 0, "100-500": 0, "500-1000": 0, "1000+": 0}
+            for size in metrics["packet_sizes"]:
+                if size < 100:
+                    size_ranges["0-100"] += 1
+                elif size < 500:
+                    size_ranges["100-500"] += 1
+                elif size < 1000:
+                    size_ranges["500-1000"] += 1
+                else:
+                    size_ranges["1000+"] += 1
+            
+            visualizations["packet_size_distribution"] = {
+                "type": "histogram",
+                "data": [
+                    {"range": range_name, "value": count} 
+                    for range_name, count in size_ranges.items()
+                ],
+                "title": "Packet Size Distribution"
+            }
+    
+    elif test_type.startswith("network_security") or test_type.startswith("security_scan"):
+        # Network security scan visualizations
+        if "open_ports" in metrics:
+            # Group by service type
+            service_counts = {}
+            for port_data in metrics["open_ports"]:
+                service = port_data.get("service", "unknown")
+                service_counts[service] = service_counts.get(service, 0) + 1
+            
+            if service_counts:
+                visualizations["open_ports_by_service"] = {
+                    "type": "bar",
+                    "data": [
+                        {"label": service, "value": count} 
+                        for service, count in service_counts.items()
+                    ],
+                    "title": "Open Ports by Service Type"
+                }
+        
+        if "open_ports" in metrics or "closed_ports" in metrics or "filtered_ports" in metrics:
+            port_status = {
+                "Open": len(metrics.get("open_ports", [])),
+                "Closed": len(metrics.get("closed_ports", [])),
+                "Filtered": len(metrics.get("filtered_ports", []))
+            }
+            visualizations["port_status"] = {
+                "type": "bar",
+                "data": [
+                    {"label": status, "value": count} 
+                    for status, count in port_status.items() if count > 0
+                ],
+                "title": "Port Status Distribution"
+            }
+    
+    elif test_type.startswith("endpoint_discovery") or (test_type.startswith("endpoint") and not test_type.startswith("endpoint_performance")):
+        # Endpoint discovery visualizations
+        if "endpoints_found" in metrics and metrics["endpoints_found"]:
+            # Group by HTTP method
+            method_counts = {}
+            for endpoint in metrics["endpoints_found"]:
+                method = endpoint.get("method", "GET")
+                method_counts[method] = method_counts.get(method, 0) + 1
+            
+            if method_counts:
+                visualizations["endpoints_by_method"] = {
+                    "type": "bar",
+                    "data": [
+                        {"label": method, "value": count} 
+                        for method, count in method_counts.items()
+                    ],
+                    "title": "Endpoints by HTTP Method"
+                }
+            
+            # Group by status code
+            status_counts = {}
+            for endpoint in metrics["endpoints_found"]:
+                status = str(endpoint.get("status_code", "unknown"))
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            if status_counts:
+                visualizations["endpoints_by_status"] = {
+                    "type": "bar",
+                    "data": [
+                        {"label": f"Status {status}", "value": count} 
+                        for status, count in status_counts.items()
+                    ],
+                    "title": "Endpoints by Status Code"
+                }
+    
+    return visualizations
+
+
+def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Create summary statistics based on test type with human-readable analysis"""
+    summary = {}
+    
+    # Check for all load test variations
+    if (test_type.startswith("load") or test_type.startswith("stress") or 
+        test_type.startswith("spike") or test_type.startswith("soak") or
+        test_type.startswith("ramp") or test_type.startswith("throughput") or
+        test_type.startswith("endpoint") or test_type.startswith("api") or
+        test_type.startswith("website") or test_type.startswith("volume") or
+        test_type.startswith("concurrent") or test_type.startswith("response_time")):
+        
+        total_requests = metrics.get("total_requests", 0)
+        successful_requests = metrics.get("successful_requests", 0)
+        failed_requests = metrics.get("failed_requests", 0)
+        avg_response_time = round(metrics.get("avg_response_time", 0), 2)
+        min_response_time = round(metrics.get("min_response_time", 0), 2)
+        max_response_time = round(metrics.get("max_response_time", 0), 2)
+        median_response_time = round(metrics.get("median_response_time", 0), 2)
+        requests_per_second = round(metrics.get("requests_per_second", 0), 2)
+        
+        # Calculate success rate
+        success_rate = (
+            round((successful_requests / total_requests) * 100, 2)
+            if total_requests > 0 else 0.0
+        )
+        failure_rate = round((failed_requests / total_requests) * 100, 2) if total_requests > 0 else 0.0
+        
+        # Get failure details
+        failures = metrics.get("failures", [])
+        failure_details = []
+        if failures:
+            for failure in failures:
+                error_msg = failure.get("error", "Unknown error")
+                occurrences = failure.get("occurrences", 0)
+                failure_details.append(f"{occurrences} error(s): {error_msg}")
+        
+        # Build human-readable summary text
+        summary_text = []
+        
+        # Request Statistics
+        summary_text.append("## Request Statistics\n")
+        summary_text.append(f"**Total requests:** {total_requests:,} — Total HTTP requests sent during the test\n")
+        summary_text.append(f"**Successful requests:** {successful_requests:,} — Requests that returned 200 OK\n")
+        summary_text.append(f"**Failed requests:** {failed_requests:,} — Requests that failed ({failure_rate}% failure rate)\n")
+        summary_text.append(f"**Success rate:** {success_rate}% — Indicates how well the system handled requests\n")
+        
+        # Response Time Metrics
+        summary_text.append("\n## Response Time Metrics\n")
+        summary_text.append(f"**Average response time:** {avg_response_time:,.2f} ms ({avg_response_time/1000:.2f} seconds) — Average time to respond\n")
+        summary_text.append(f"**Median response time:** {median_response_time:,.2f} ms — Half of requests were faster than this\n")
+        summary_text.append(f"**Min response time:** {min_response_time:,.2f} ms — Fastest response\n")
+        summary_text.append(f"**Max response time:** {max_response_time:,.2f} ms ({max_response_time/1000:.2f} seconds) — Slowest response\n")
+        
+        # Performance Indicators
+        summary_text.append("\n## Performance Indicators\n")
+        summary_text.append(f"**Requests per second:** {requests_per_second:.2f} — Throughput under load\n")
+        if failure_details:
+            summary_text.append(f"**Failures:** {', '.join(failure_details)}\n")
+        
+        # Analysis
+        summary_text.append("\n## What This Tells You\n")
+        
+        # Overall assessment
+        if success_rate >= 99:
+            summary_text.append(f"**Overall:** {success_rate}% success rate is excellent — System handled requests very well\n")
+        elif success_rate >= 95:
+            summary_text.append(f"**Overall:** {success_rate}% success rate is good — System handled most requests successfully\n")
+        elif success_rate >= 90:
+            summary_text.append(f"**Overall:** {success_rate}% success rate is acceptable but needs attention — Some failures detected\n")
+        else:
+            summary_text.append(f"**Overall:** {success_rate}% success rate is concerning — High failure rate indicates system issues\n")
+        
+        # Response time analysis
+        if avg_response_time < 500:
+            summary_text.append(f"**Response times:** Average {avg_response_time/1000:.2f}s is excellent — Very fast response times\n")
+        elif avg_response_time < 1000:
+            summary_text.append(f"**Response times:** Average {avg_response_time/1000:.2f}s is good — Acceptable response times\n")
+        elif avg_response_time < 2000:
+            summary_text.append(f"**Response times:** Average {avg_response_time/1000:.2f}s is moderate — Some optimization may be needed\n")
+        else:
+            summary_text.append(f"**Response times:** Average {avg_response_time/1000:.2f}s is slow — Optimization recommended\n")
+        
+        if median_response_time < avg_response_time * 0.5:
+            summary_text.append(f"**Response time distribution:** Median {median_response_time/1000:.2f}s is much better than average, indicating some very slow requests\n")
+        
+        # Outlier analysis
+        if max_response_time > avg_response_time * 10:
+            summary_text.append(f"**Outlier:** Max {max_response_time/1000:.2f} seconds suggests occasional timeouts or very slow endpoints — Investigate specific slow requests\n")
+        elif max_response_time > avg_response_time * 5:
+            summary_text.append(f"**Outlier:** Max {max_response_time/1000:.2f} seconds indicates some slow requests — Review endpoint performance\n")
+        
+        # Throughput analysis
+        if requests_per_second > 100:
+            summary_text.append(f"**Throughput:** {requests_per_second:.2f} RPS is high — Good system capacity\n")
+        elif requests_per_second > 50:
+            summary_text.append(f"**Throughput:** {requests_per_second:.2f} RPS is moderate — Adequate for most use cases\n")
+        else:
+            summary_text.append(f"**Throughput:** {requests_per_second:.2f} RPS is low — May need scaling or optimization\n")
+        
+        # Recommendations
+        summary_text.append("\n## Recommendations\n")
+        
+        if failed_requests > 0:
+            summary_text.append(f"• **Investigate the {failed_requests} failed request(s)** — Check the failures array for details and fix underlying issues\n")
+        
+        if max_response_time > avg_response_time * 5:
+            summary_text.append(f"• **Investigate slow requests** (max {max_response_time/1000:.2f}s) — May indicate a specific slow endpoint or resource that needs optimization\n")
+        
+        if avg_response_time > 1000:
+            summary_text.append(f"• **Optimize response times** — Average {avg_response_time/1000:.2f}s is above optimal; consider caching, database optimization, or code improvements\n")
+        
+        if median_response_time < avg_response_time * 0.7:
+            summary_text.append(f"• **Identify slow endpoints** — Large gap between median ({median_response_time/1000:.2f}s) and average ({avg_response_time/1000:.2f}s) suggests specific endpoints need attention\n")
+        
+        if requests_per_second < 10 and total_requests > 100:
+            summary_text.append(f"• **Review system capacity** — Low throughput ({requests_per_second:.2f} RPS) may indicate bottlenecks; consider load balancing or scaling\n")
+        
+        if not failed_requests and avg_response_time < 1000 and requests_per_second > 50:
+            summary_text.append("• **System performance is good** — Continue monitoring and consider stress testing to find breaking points\n")
+        
+        # Combine all text
+        full_summary_text = "\n".join(summary_text)
+        
+        # Return both structured metrics and human-readable summary
+        summary = {
+            "total_requests": float(total_requests),
+            "successful_requests": float(successful_requests),
+            "failed_requests": float(failed_requests),
+            "success_rate": success_rate,
+            "avg_response_time_ms": avg_response_time,
+            "min_response_time_ms": min_response_time,
+            "max_response_time_ms": max_response_time,
+            "median_response_time_ms": median_response_time,
+            "requests_per_second": requests_per_second,
+            "summary_text": full_summary_text  # Human-readable summary
+        }
+            
+    elif test_type.startswith("benchmark"):
+        avg_time = round(metrics.get("avg_time_ms", 0), 2)
+        min_time = round(metrics.get("min_time_ms", 0), 2)
+        max_time = round(metrics.get("max_time_ms", 0), 2)
+        std_dev = round(metrics.get("std_dev", 0), 2)
+        iterations = metrics.get("iterations", 0)
+        
+        summary_text = []
+        summary_text.append("## Benchmark Results\n")
+        summary_text.append(f"**Average execution time:** {avg_time:,.2f} ms\n")
+        summary_text.append(f"**Min execution time:** {min_time:,.2f} ms\n")
+        summary_text.append(f"**Max execution time:** {max_time:,.2f} ms\n")
+        summary_text.append(f"**Standard deviation:** {std_dev:,.2f} ms — Indicates consistency of performance\n")
+        summary_text.append(f"**Iterations:** {iterations:,} — Number of test runs\n")
+        
+        summary = {
+            "avg_time_ms": avg_time,
+            "min_time_ms": min_time,
+            "max_time_ms": max_time,
+            "std_dev_ms": std_dev,
+            "iterations": iterations,
+            "summary_text": "\n".join(summary_text)
+        }
+    
+    # Network test summaries
+    elif test_type.startswith("ssl_tls") or test_type.startswith("ssl") or test_type.startswith("tls"):
+        summary_text = []
+        summary_text.append("## Certificate Information\n")
+        
+        # Initialize days_remaining before the if/else block
+        days_remaining = metrics.get("certificate_days_remaining", 0)
+        
+        if metrics.get("certificate_valid"):
+            # Extract issuer info
+            issuer = metrics.get('certificate_issuer')
+            if issuer and isinstance(issuer, dict):
+                issuer_name = (
+                    issuer.get('organizationName') or 
+                    issuer.get('commonName') or 
+                    issuer.get('organizationalUnitName') or 
+                    'Unknown'
+                )
+            else:
+                issuer_name = 'Unknown'
+            
+            # Extract subject info
+            subject = metrics.get('certificate_subject')
+            if subject and isinstance(subject, dict):
+                subject_name = (
+                    subject.get('commonName') or 
+                    subject.get('organizationName') or 
+                    'Unknown'
+                )
+            else:
+                subject_name = 'Unknown'
+            
+            summary_text.append(f"**Issuer:** {issuer_name} — Certificate authority\n")
+            summary_text.append(f"**Subject:** {subject_name} — Certificate subject\n")
+            summary_text.append(f"**Valid From:** {metrics.get('certificate_valid_from', 'Unknown')} — Certificate validity start\n")
+            summary_text.append(f"**Valid To:** {metrics.get('certificate_valid_to', 'Unknown')} — Certificate expiration date\n")
+            
+            if days_remaining > 0:
+                summary_text.append(f"**Days Remaining:** {days_remaining} days — Time until certificate expires\n")
+            else:
+                summary_text.append(f"**Days Remaining:** {days_remaining} days — Certificate may be expired or date parsing failed\n")
+        else:
+            summary_text.append("**Certificate Status:** Invalid or not found\n")
+        
+        summary_text.append("\n## Security Assessment\n")
+        summary_text.append(f"**Protocol Versions:** {', '.join(metrics.get('protocol_versions', []))} — Supported TLS versions\n")
+        summary_text.append(f"**Cipher Suites:** {len(metrics.get('cipher_suites', []))} — Number of available cipher suites\n")
+        summary_text.append(f"**Security Rating:** {metrics.get('security_rating', 'Unknown')} — Overall security assessment\n")
+        
+        summary_text.append("\n## Recommendations\n")
+        recommendations = metrics.get("recommendations", [])
+        
+        # Debug logging
+        logger.debug(f"SSL/TLS recommendations from metrics: {recommendations}")
+        logger.debug(f"Certificate valid: {metrics.get('certificate_valid')}, days_remaining: {days_remaining}")
+        
+        # Filter out empty recommendations
+        valid_recommendations = [r for r in recommendations if r and isinstance(r, str) and r.strip()]
+        
+        # Add recommendations from metrics if they exist
+        for rec in valid_recommendations:
+            summary_text.append(f"• {rec}\n")
+        
+        # Add fallback recommendations if none were provided or all were empty
+        if not valid_recommendations:
+            certificate_valid = metrics.get("certificate_valid", False)
+            protocol_versions = metrics.get("protocol_versions", [])
+            
+            # Priority 1: Certificate expiration issues
+            if not certificate_valid:
+                if days_remaining <= 0:
+                    summary_text.append("• Certificate has expired — Immediate renewal required\n")
+                else:
+                    summary_text.append("• Certificate validation failed — Check certificate configuration\n")
+            elif days_remaining < 30:
+                summary_text.append(f"• Renew certificate soon — Expires in {days_remaining} days\n")
+            
+            # Priority 2: TLS version improvements
+            if certificate_valid and days_remaining >= 30:
+                if "TLSv1.3" not in protocol_versions:
+                    if "TLSv1.2" in protocol_versions:
+                        summary_text.append("• Consider upgrading to TLS 1.3 for enhanced security\n")
+                    else:
+                        summary_text.append("• Upgrade to TLS 1.2 or 1.3 — Current version may be insecure\n")
+            
+            # If still no recommendations were added, add a positive note for secure configurations
+            # Check if we added any recommendations after the "## Recommendations\n" header
+            recommendations_added = len([line for line in summary_text if line.startswith("•")])
+            if recommendations_added == 0:
+                if certificate_valid and days_remaining >= 30 and "TLSv1.3" in protocol_versions:
+                    summary_text.append("• No action required — Certificate and TLS configuration are secure\n")
+                elif certificate_valid and days_remaining >= 30:
+                    summary_text.append("• Certificate is valid and secure\n")
+        
+        summary = {
+            "certificate_valid": metrics.get("certificate_valid", False),
+            "certificate_days_remaining": metrics.get("certificate_days_remaining", 0),
+            "security_rating": metrics.get("security_rating", "Unknown"),
+            "protocol_versions_count": len(metrics.get("protocol_versions", [])),
+            "cipher_suites_count": len(metrics.get("cipher_suites", [])),
+            "summary_text": "".join(summary_text)
+        }
+    
+    elif test_type.startswith("dns"):
+        summary_text = []
+        summary_text.append("## DNS Performance\n")
+        avg_time = metrics.get("average_resolution_time", 0)
+        summary_text.append(f"**Average Resolution Time:** {avg_time:.2f} ms — DNS query response time\n")
+        summary_text.append(f"**DNSSEC Status:** {'Enabled' if metrics.get('dnssec_enabled') else 'Disabled'} — DNSSEC validation status\n")
+        summary_text.append(f"**DNS Leak Test:** {'Failed' if metrics.get('dns_leak_detected') else 'Passed'} — Privacy leak detection\n")
+        
+        summary_text.append("\n## DNS Servers\n")
+        dns_servers = metrics.get("dns_servers", [])
+        if dns_servers:
+            for i, server in enumerate(dns_servers, 1):
+                summary_text.append(f"**Server {i}:** {server}\n")
+        
+        if metrics.get("dns_leak_detected"):
+            summary_text.append(f"\n**Leaked Servers:** {', '.join(metrics.get('leaked_servers', []))} — Servers that received queries\n")
+        
+        summary_text.append("\n## Recommendations\n")
+        if not metrics.get("dnssec_enabled"):
+            summary_text.append("• Enable DNSSEC for improved DNS security\n")
+        if metrics.get("dns_leak_detected"):
+            summary_text.append("• Configure DNS servers to prevent leaks\n")
+        if avg_time > 100:
+            summary_text.append(f"• DNS resolution time ({avg_time:.2f}ms) is high — Consider using faster DNS servers\n")
+        
+        summary = {
+            "average_resolution_time_ms": avg_time,
+            "dnssec_enabled": metrics.get("dnssec_enabled", False),
+            "dns_leak_detected": metrics.get("dns_leak_detected", False),
+            "dns_servers_count": len(dns_servers),
+            "summary_text": "".join(summary_text)
+        }
+    
+    elif test_type.startswith("connectivity"):
+        summary_text = []
+        summary_text.append("## Connectivity Test Results\n")
+        summary_text.append(f"**Ping Test:** {'Success' if metrics.get('ping_success') else 'Failed'} — ICMP connectivity\n")
+        summary_text.append(f"**DNS Resolution:** {'Success' if metrics.get('dns_resolution') else 'Failed'} — DNS query test\n")
+        summary_text.append(f"**HTTP Connection:** {'Success' if metrics.get('http_connection') else 'Failed'} — HTTP connectivity\n")
+        summary_text.append(f"**HTTPS Connection:** {'Success' if metrics.get('https_connection') else 'Failed'} — HTTPS connectivity\n")
+        
+        summary_text.append("\n## Performance Metrics\n")
+        avg_ping = metrics.get("average_ping_time", 0)
+        dns_time = metrics.get("dns_resolution_time", 0)
+        summary_text.append(f"**Average Ping Time:** {avg_ping:.2f} ms — Network latency\n")
+        summary_text.append(f"**DNS Resolution Time:** {dns_time:.2f} ms — DNS query time\n")
+        
+        success_count = sum([
+            metrics.get("ping_success", False),
+            metrics.get("dns_resolution", False),
+            metrics.get("http_connection", False),
+            metrics.get("https_connection", False)
+        ])
+        success_rate = (success_count / 4) * 100
+        summary_text.append(f"**Connection Success Rate:** {success_rate:.0f}% — Overall connectivity\n")
+        
+        summary_text.append("\n## Diagnostics\n")
+        issues = metrics.get("issues_found", [])
+        if issues:
+            summary_text.append("**Issues Found:**\n")
+            for issue in issues:
+                summary_text.append(f"• {issue}\n")
+        else:
+            summary_text.append("**No issues detected** — All connectivity tests passed\n")
+        
+        summary_text.append("\n## Recommendations\n")
+        recommendations = metrics.get("recommendations", [])
+        if recommendations:
+            for rec in recommendations:
+                summary_text.append(f"• {rec}\n")
+        
+        summary = {
+            "ping_success": metrics.get("ping_success", False),
+            "dns_resolution": metrics.get("dns_resolution", False),
+            "http_connection": metrics.get("http_connection", False),
+            "https_connection": metrics.get("https_connection", False),
+            "average_ping_time_ms": avg_ping,
+            "dns_resolution_time_ms": dns_time,
+            "connection_success_rate": success_rate,
+            "issues_count": len(issues),
+            "summary_text": "".join(summary_text)
+        }
+    
+    elif test_type.startswith("protocol_traffic") or test_type.startswith("protocol"):
+        summary_text = []
+        summary_text.append("## Traffic Overview\n")
+        total_packets = metrics.get("total_packets", 0)
+        traffic_volume = metrics.get("traffic_volume_bytes", 0)
+        summary_text.append(f"**Total Packets:** {total_packets:,} — Packets captured\n")
+        summary_text.append(f"**Protocols Detected:** {', '.join(metrics.get('protocols_detected', []))} — Network protocols found\n")
+        summary_text.append(f"**Traffic Volume:** {traffic_volume / (1024*1024):.2f} MB — Total data transferred\n")
+        
+        summary_text.append("\n## Protocol Distribution\n")
+        protocol_dist = metrics.get("protocol_distribution", {})
+        total_protocol_packets = sum(protocol_dist.values())
+        for protocol, count in protocol_dist.items():
+            percentage = (count / total_protocol_packets * 100) if total_protocol_packets > 0 else 0
+            summary_text.append(f"**{protocol}:** {percentage:.1f}% — {count} packets\n")
+        
+        summary_text.append("\n## Analysis\n")
+        if protocol_dist:
+            most_active = max(protocol_dist.items(), key=lambda x: x[1])[0]
+            summary_text.append(f"**Most Active Protocol:** {most_active}\n")
+        
+        avg_packet_size = metrics.get("average_packet_size", 0)
+        summary_text.append(f"**Average Packet Size:** {avg_packet_size:.2f} bytes\n")
+        
+        summary = {
+            "total_packets": total_packets,
+            "traffic_volume_bytes": traffic_volume,
+            "protocols_detected_count": len(metrics.get("protocols_detected", [])),
+            "average_packet_size_bytes": avg_packet_size,
+            "summary_text": "".join(summary_text)
+        }
+    
+    elif test_type.startswith("network_security") or test_type.startswith("security_scan"):
+        summary_text = []
+        summary_text.append("## Scan Results\n")
+        target = metrics.get("target", "Unknown")
+        summary_text.append(f"**Target:** {target}\n")
+        summary_text.append(f"**Ports Scanned:** {metrics.get('ports_scanned', 0)} — Total ports tested\n")
+        summary_text.append(f"**Open Ports:** {len(metrics.get('open_ports', []))} — Ports accepting connections\n")
+        summary_text.append(f"**Filtered Ports:** {len(metrics.get('filtered_ports', []))} — Ports with firewall filtering\n")
+        summary_text.append(f"**Closed Ports:** {len(metrics.get('closed_ports', []))} — Ports not accepting connections\n")
+        
+        summary_text.append("\n## Security Assessment\n")
+        vulnerabilities = metrics.get("vulnerabilities", [])
+        summary_text.append(f"**Vulnerabilities Found:** {len(vulnerabilities)} — Security issues detected\n")
+        
+        open_ports_count = len(metrics.get("open_ports", []))
+        if open_ports_count == 0:
+            risk_level = "Low"
+        elif open_ports_count < 5:
+            risk_level = "Medium"
+        else:
+            risk_level = "High"
+        
+        summary_text.append(f"**Risk Level:** {risk_level} — Overall risk assessment\n")
+        
+        services = metrics.get("services", {})
+        if services:
+            summary_text.append(f"**Exposed Services:** {', '.join([s.get('name', 'unknown') for s in services.values()])} — Services accessible from network\n")
+        
+        summary_text.append("\n## Recommendations\n")
+        if open_ports_count > 0:
+            summary_text.append(f"• Review {open_ports_count} open port(s) — Ensure they are necessary and properly secured\n")
+        if vulnerabilities:
+            summary_text.append(f"• Address {len(vulnerabilities)} vulnerability/vulnerabilities found\n")
+        if risk_level == "High":
+            summary_text.append("• High number of open ports detected — Consider closing unnecessary services\n")
+        
+        summary = {
+            "ports_scanned": metrics.get("ports_scanned", 0),
+            "open_ports_count": open_ports_count,
+            "filtered_ports_count": len(metrics.get("filtered_ports", [])),
+            "closed_ports_count": len(metrics.get("closed_ports", [])),
+            "vulnerabilities_count": len(vulnerabilities),
+            "risk_level": risk_level,
+            "summary_text": "".join(summary_text)
+        }
+    
+    elif test_type.startswith("endpoint_discovery") or (test_type.startswith("endpoint") and not test_type.startswith("endpoint_performance")):
+        summary_text = []
+        summary_text.append("## Discovery Results\n")
+        total_endpoints = metrics.get("total_endpoints", 0)
+        summary_text.append(f"**Total Endpoints Found:** {total_endpoints} — API endpoints discovered\n")
+        methods = metrics.get("methods_detected", [])
+        summary_text.append(f"**HTTP Methods:** {', '.join(methods) if methods else 'None'} — Methods detected\n")
+        
+        status_codes = metrics.get("status_codes", {})
+        if status_codes:
+            summary_text.append(f"**Status Codes:** {', '.join(status_codes.keys())} — Response status codes\n")
+        
+        summary_text.append("\n## Endpoint Analysis\n")
+        endpoints = metrics.get("endpoints_found", [])
+        public_count = sum(1 for e in endpoints if e.get("status_code", 0) < 400)
+        protected_count = sum(1 for e in endpoints if e.get("status_code", 0) >= 400)
+        summary_text.append(f"**Public Endpoints:** {public_count} — Endpoints without authentication\n")
+        summary_text.append(f"**Protected Endpoints:** {protected_count} — Endpoints requiring auth\n")
+        
+        avg_response = metrics.get("average_response_time", 0)
+        summary_text.append(f"**Average Response Time:** {avg_response:.2f} ms — Endpoint performance\n")
+        
+        summary_text.append("\n## Recommendations\n")
+        if public_count > protected_count:
+            summary_text.append("• Review public endpoints — Ensure proper authentication and authorization\n")
+        if avg_response > 1000:
+            summary_text.append(f"• Optimize slow endpoints — Average response time ({avg_response:.2f}ms) is high\n")
+        
+        summary = {
+            "total_endpoints": total_endpoints,
+            "methods_detected_count": len(methods),
+            "public_endpoints_count": public_count,
+            "protected_endpoints_count": protected_count,
+            "average_response_time_ms": avg_response,
+            "summary_text": "".join(summary_text)
+        }
+    
+    return summary
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
     # Startup - DO NOT auto-initialize browser (lazy initialization)
     # Agent object will be created on first request, browser session starts on first test
+    # Start test queue processor
+    global queue_processor_running
+    queue_task = None
+    if not queue_processor_running:
+        queue_task = asyncio.create_task(_execute_test_queue())
+    
     yield
+    
     # Shutdown - cleanup browser if it was started
-    global global_agent, external_browsers
+    global global_agent, external_browsers, test_queue, test_tasks
+    
+    # Stop queue processor
+    if queue_task:
+        await test_queue.put(None)  # Shutdown signal
+        try:
+            await asyncio.wait_for(queue_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            queue_task.cancel()
+    
+    # Cancel any running tests
+    for test_id, task in test_tasks.items():
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    
     try:
         if global_agent:
             if hasattr(global_agent, 'browser') and global_agent.browser:
@@ -1190,6 +2152,528 @@ async def execute_browser_use(request: BrowserUseRequest):
             "error": str(e)
         }
         raise HTTPException(status_code=500, detail=f"Browser automation failed: {str(e)}")
+
+
+async def _queue_test(
+    test_type: str,
+    test_name: str,
+    test_func: Callable,
+    test_params: Dict[str, Any],
+    website_url: Optional[str] = None
+) -> str:
+    """Queue a test for execution and return test_id"""
+    global test_queue, test_results
+    
+    # Get target URL
+    target_url = website_url or getattr(global_agent, "current_url", None) or "https://www.w3schools.com/"
+    
+    # Validate URL
+    if not target_url or not target_url.startswith(('http://', 'https://')):
+        raise HTTPException(status_code=400, detail="Valid website URL is required")
+    
+    # Generate test ID
+    test_id = str(uuid.uuid4())
+    started_at = datetime.utcnow()
+    
+    # Initialize test result
+    test_results[test_id] = {
+        "test_id": test_id,
+        "test_type": test_type,
+        "test_name": test_name,
+        "status": TestStatus.pending,
+        "started_at": started_at.isoformat(),
+        "progress": 0.0
+    }
+    
+    # Update test_params with target_url
+    test_params["target_url"] = target_url
+    
+    # Queue test
+    await test_queue.put((test_id, test_type, test_func, test_params))
+    
+    return test_id
+
+
+@app.post("/api/v1/qa-tests/load-test")
+async def run_load_test(request: LoadTestRequest):
+    """Run basic load test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "load_test",
+            request.test_name or "Basic Load Test",
+            runner.run_load_test,
+            {
+                "users": request.users,
+                "spawn_rate": request.ramp_up,
+                "duration": request.duration
+            },
+            request.target_url or request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Load test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue load test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/stress-test")
+async def run_stress_test(request: StressTestRequest):
+    """Run stress test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "stress_test",
+            request.test_name or "Stress Test",
+            runner.run_stress_test,
+            {
+                "max_users": request.max_users,
+                "step_users": request.step_users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Stress test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue stress test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/spike-test")
+async def run_spike_test(request: SpikeTestRequest):
+    """Run spike test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "spike_test",
+            request.test_name or "Spike Test",
+            runner.run_spike_test,
+            {
+                "initial_users": request.initial_users,
+                "spike_users": request.spike_users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Spike test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue spike test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/soak-test")
+async def run_soak_test(request: SoakTestRequest):
+    """Run soak test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "soak_test",
+            request.test_name or "Soak Test",
+            runner.run_soak_test,
+            {
+                "users": request.users,
+                "duration_hours": request.duration_hours
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Soak test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue soak test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/ramp-up-test")
+async def run_ramp_up_test(request: RampUpTestRequest):
+    """Run ramp-up test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "ramp_up_test",
+            request.test_name or "Ramp-Up Test",
+            runner.run_ramp_up_test,
+            {
+                "max_users": request.max_users,
+                "ramp_up_time": request.ramp_up_time,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Ramp-up test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue ramp-up test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/throughput-test")
+async def run_throughput_test(request: ThroughputTestRequest):
+    """Run throughput test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "throughput_test",
+            request.test_name or "Throughput Test",
+            runner.run_throughput_test,
+            {
+                "target_rps": request.target_rps,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Throughput test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue throughput test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/endpoint-performance-test")
+async def run_endpoint_performance_test(request: EndpointPerformanceTestRequest):
+    """Run endpoint performance test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "endpoint_performance_test",
+            request.test_name or f"Endpoint Performance Test: {request.endpoint}",
+            runner.run_endpoint_performance_test,
+            {
+                "endpoint": request.endpoint,
+                "users": request.users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Endpoint performance test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue endpoint performance test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/api-load-test")
+async def run_api_load_test(request: ApiLoadTestRequest):
+    """Run API load test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "api_load_test",
+            request.test_name or "API Load Test",
+            runner.run_api_load_test,
+            {
+                "users": request.users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "API load test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue API load test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/website-load-test")
+async def run_website_load_test(request: WebsiteLoadTestRequest):
+    """Run website load test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "website_load_test",
+            request.test_name or "Website Load Test",
+            runner.run_website_load_test,
+            {
+                "users": request.users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Website load test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue website load test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/volume-test")
+async def run_volume_test(request: VolumeTestRequest):
+    """Run volume test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "volume_test",
+            request.test_name or "Volume Test",
+            runner.run_volume_test,
+            {
+                "users": request.users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Volume test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue volume test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/concurrent-user-test")
+async def run_concurrent_user_test(request: ConcurrentUserTestRequest):
+    """Run concurrent user test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "concurrent_user_test",
+            request.test_name or "Concurrent User Test",
+            runner.run_concurrent_user_test,
+            {
+                "concurrent_users": request.concurrent_users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Concurrent user test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue concurrent user test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/response-time-distribution-test")
+async def run_response_time_distribution_test(request: ResponseTimeDistributionTestRequest):
+    """Run response time distribution test"""
+    try:
+        from qa_agent.utils.locust_runner import LocustTestRunner
+        
+        runner = LocustTestRunner()
+        test_id = await _queue_test(
+            "response_time_distribution_test",
+            request.test_name or "Response Time Distribution Test",
+            runner.run_response_time_distribution_test,
+            {
+                "users": request.users,
+                "duration": request.duration
+            },
+            request.website_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Response time distribution test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue response time distribution test: {str(e)}")
+
+
+# Network test endpoints
+@app.post("/api/v1/qa-tests/ssl-tls-validation")
+async def run_ssl_tls_validation(request: SslTlsValidationRequest):
+    """Run SSL/TLS certificate validation test"""
+    try:
+        from qa_agent.utils.network_runner import NetworkTestRunner
+        
+        runner = NetworkTestRunner()
+        test_id = await _queue_test(
+            "ssl_tls_validation",
+            request.test_name or "SSL/TLS Certificate Validation",
+            runner.run_ssl_tls_validation,
+            {},
+            request.website_url or request.target_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "SSL/TLS validation test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue SSL/TLS validation test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/dns-security-test")
+async def run_dns_security_test(request: DnsSecurityTestRequest):
+    """Run DNS security test"""
+    try:
+        from qa_agent.utils.network_runner import NetworkTestRunner
+        
+        runner = NetworkTestRunner()
+        test_id = await _queue_test(
+            "dns_security_test",
+            request.test_name or "DNS Security Test",
+            runner.run_dns_security_test,
+            {},
+            request.website_url or request.target_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "DNS security test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue DNS security test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/connectivity-diagnostics")
+async def run_connectivity_diagnostics(request: ConnectivityDiagnosticsRequest):
+    """Run network connectivity diagnostics"""
+    try:
+        from qa_agent.utils.network_runner import NetworkTestRunner
+        
+        runner = NetworkTestRunner()
+        test_id = await _queue_test(
+            "connectivity_diagnostics",
+            request.test_name or "Network Connectivity Diagnostics",
+            runner.run_connectivity_diagnostics,
+            {},
+            request.website_url or request.target_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Connectivity diagnostics test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue connectivity diagnostics test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/protocol-traffic-analysis")
+async def run_protocol_traffic_analysis(request: ProtocolTrafficAnalysisRequest):
+    """Run protocol traffic analysis"""
+    try:
+        from qa_agent.utils.network_runner import NetworkTestRunner
+        
+        runner = NetworkTestRunner()
+        test_id = await _queue_test(
+            "protocol_traffic_analysis",
+            request.test_name or "Protocol Traffic Analysis",
+            runner.run_protocol_traffic_analysis,
+            {"duration": request.duration},
+            request.website_url or request.target_url
+        )
+        
+        return {"test_id": test_id, "status": "queued", "message": "Protocol traffic analysis test queued for execution"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue protocol traffic analysis test: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/network-security-scan")
+async def run_network_security_scan(request: NetworkSecurityScanRequest):
+    """Run network security scan (restricted test - requires permission)"""
+    try:
+        from qa_agent.utils.network_runner import NetworkTestRunner
+        from qa_agent.utils.network_safety import NetworkSafetyValidator
+        
+        # Validate safety
+        validator = NetworkSafetyValidator()
+        target_url = request.website_url or request.target_url
+        is_valid, error_msg = validator.validate_target(
+            target_url, "network_security_scan", request.user_permission
+        )
+        
+        if not is_valid:
+            raise HTTPException(status_code=403, detail=error_msg)
+        
+        runner = NetworkTestRunner()
+        test_id = await _queue_test(
+            "network_security_scan",
+            request.test_name or "Network Security Scan",
+            runner.run_network_security_scan,
+            {
+                "ports": request.ports,
+                "scan_type": request.scan_type,
+                "user_permission": request.user_permission
+            },
+            target_url
+        )
+        
+        logger.warning(f"Network security scan queued for {target_url} (permission: {request.user_permission})")
+        return {"test_id": test_id, "status": "queued", "message": "Network security scan queued for execution"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue network security scan: {str(e)}")
+
+
+@app.post("/api/v1/qa-tests/endpoint-discovery")
+async def run_endpoint_discovery(request: EndpointDiscoveryRequest):
+    """Run endpoint discovery (restricted test - requires permission)"""
+    try:
+        from qa_agent.utils.network_runner import NetworkTestRunner
+        from qa_agent.utils.network_safety import NetworkSafetyValidator
+        
+        # Validate safety
+        validator = NetworkSafetyValidator()
+        target_url = request.website_url or request.target_url
+        is_valid, error_msg = validator.validate_target(
+            target_url, "endpoint_discovery", request.user_permission
+        )
+        
+        if not is_valid:
+            raise HTTPException(status_code=403, detail=error_msg)
+        
+        runner = NetworkTestRunner()
+        test_id = await _queue_test(
+            "endpoint_discovery",
+            request.test_name or "Endpoint Discovery",
+            runner.run_endpoint_discovery,
+            {
+                "discovery_method": request.discovery_method,
+                "user_permission": request.user_permission
+            },
+            target_url
+        )
+        
+        logger.warning(f"Endpoint discovery queued for {target_url} (permission: {request.user_permission})")
+        return {"test_id": test_id, "status": "queued", "message": "Endpoint discovery test queued for execution"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue endpoint discovery test: {str(e)}")
+
+
+@app.get("/api/v1/qa-tests/test-status/{test_id}")
+async def get_test_status(test_id: str):
+    """Get current test status and progress"""
+    if test_id not in test_results:
+        raise HTTPException(status_code=404, detail=f"Test {test_id} not found")
+    
+    result = test_results[test_id]
+    return {
+        "test_id": test_id,
+        "status": result.get("status", "unknown"),
+        "progress": result.get("progress", 0.0),
+        "started_at": result.get("started_at"),
+        "completed_at": result.get("completed_at"),
+        "error": result.get("error")
+    }
+
+
+@app.post("/api/v1/qa-tests/cancel-test/{test_id}")
+async def cancel_test(test_id: str):
+    """Cancel a running or queued test"""
+    global test_tasks, test_queue, current_test
+    
+    if test_id not in test_results:
+        raise HTTPException(status_code=404, detail=f"Test {test_id} not found")
+    
+    # Cancel task if running
+    if test_id in test_tasks:
+        task = test_tasks[test_id]
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    
+    # Update status
+    test_results[test_id]["status"] = TestStatus.cancelled
+    test_results[test_id]["completed_at"] = datetime.utcnow().isoformat()
+    
+    if current_test == test_id:
+        current_test = None
+    
+    return {"test_id": test_id, "status": "cancelled", "message": "Test cancelled successfully"}
 
 
 @app.get("/api/v1/qa-tests/test-results/{test_id}", response_model=TestResultResponse)

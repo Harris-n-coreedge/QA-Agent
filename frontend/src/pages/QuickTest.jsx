@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Activity, BarChart3, Globe, Smartphone, CheckCircle2, XCircle, AlertCircle, Search, Link2, Image, Cookie, Package, FileText, ClipboardList, Lightbulb, Chrome, Compass, BookOpen } from 'lucide-react'
-import { agentAPI } from '../api/client'
+import { agentAPI, performanceTestAPI } from '../api/client'
 import { TestTemplates } from '../components/TestTemplates'
 import { TestSuites } from '../components/TestSuites'
 import { ScreenshotGallery } from '../components/ScreenshotGallery'
 import { useToast } from '../contexts/ToastContext'
 import { useNotifications } from '../components/NotificationCenter'
+import { TEST_CONFIGS, TESTS_BY_CATEGORY } from '../config/testConfigs'
+import PerformanceTestCard from '../components/TestCards/PerformanceTestCard'
 
 const providers = [
   { value: 'openai', label: 'OpenAI' },
@@ -31,6 +33,9 @@ export default function QuickTest() {
   const [crossBrowserResults, setCrossBrowserResults] = useState(null)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showSuites, setShowSuites] = useState(false)
+  const [currentTestId, setCurrentTestId] = useState(null)
+  const [testQueue, setTestQueue] = useState([])
+  const [testStatuses, setTestStatuses] = useState({})
   const toast = useToast()
   const { addNotification } = useNotifications()
 
@@ -415,6 +420,73 @@ export default function QuickTest() {
     }, 100)
   }
 
+  const handleRunPerformanceTest = async (testConfig, customParams = {}) => {
+    if (running || currentTestId) {
+      toast.warning('Another test is already running. Please wait for it to complete.')
+      return
+    }
+
+    setRunning(true)
+    const loadingToast = toast.loading(`Starting ${testConfig.name}...`)
+
+    try {
+      // Run test via API with custom params (including user_permission for restricted tests)
+      const result = await performanceTestAPI.runTest(testConfig, websiteUrl, customParams)
+      const testId = result.test_id
+
+      setCurrentTestId(testId)
+      setTestQueue(prev => [...prev, { testId, testConfig, status: 'queued' }])
+
+      // Start polling for status
+      pollTestStatus(testId)
+
+      toast.success(`${testConfig.name} queued for execution`)
+    } catch (error) {
+      const errorMsg = error?.response?.data?.detail || error?.message || 'Unknown error'
+      toast.error(`Failed to start ${testConfig.name}: ${errorMsg}`)
+    } finally {
+      if (loadingToast) {
+        toast.removeToast(loadingToast)
+      }
+      setRunning(false)
+    }
+  }
+
+  const pollTestStatus = async (testId) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await performanceTestAPI.getTestStatus(testId)
+        setTestStatuses(prev => ({ ...prev, [testId]: status }))
+
+        if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
+          clearInterval(pollInterval)
+          setCurrentTestId(null)
+          setRunning(false)
+
+          // Get full test result
+          try {
+            const fullResult = await testResultsAPI.get(testId)
+            setResultText(JSON.stringify(fullResult, null, 2))
+            
+            if (status.status === 'completed') {
+              toast.success(`Test ${fullResult.test_name || 'completed'} successfully`)
+            } else {
+              toast.error(`Test ${status.status}`)
+            }
+          } catch (e) {
+            console.error('Error fetching test result:', e)
+          }
+        }
+      } catch (error) {
+        console.error('Error polling test status:', error)
+        clearInterval(pollInterval)
+      }
+    }, 2000) // Poll every 2 seconds
+
+    // Cleanup on unmount
+    return () => clearInterval(pollInterval)
+  }
+
   return (
     <div className="space-y-6">
       <div className="page-header">
@@ -649,6 +721,80 @@ export default function QuickTest() {
             >Run Mobile Test</button>
           </div>
         </div>
+      </div>
+
+      {/* Performance Tests Section */}
+      <div className="space-y-6 mt-8">
+        <div className="page-header">
+          <div>
+            <h2 className="text-2xl font-bold text-white">Performance Tests</h2>
+            <p className="text-slate-400 mt-1">
+              Load testing with Locust
+            </p>
+          </div>
+          {currentTestId && (
+            <div className="flex items-center gap-2 text-sm text-amber-400">
+              <Activity className="w-4 h-4 animate-pulse" />
+              <span>Test running: {testStatuses[currentTestId]?.status || 'running'}</span>
+              {testStatuses[currentTestId]?.progress !== undefined && (
+                <span>({Math.round(testStatuses[currentTestId].progress)}%)</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Load Tests Category */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <h3 className="text-xl font-semibold text-white">Load Tests ({TESTS_BY_CATEGORY.load.length})</h3>
+            <div className="flex-1 h-px bg-slate-700"></div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {TESTS_BY_CATEGORY.load.map((testConfig) => {
+              const queueItem = testQueue.find(q => q.testConfig.id === testConfig.id)
+              const queuePosition = queueItem ? testQueue.indexOf(queueItem) + 1 : null
+              return (
+                <PerformanceTestCard
+                  key={testConfig.id}
+                  testConfig={testConfig}
+                  onRun={handleRunPerformanceTest}
+                  disabled={running || currentTestId !== null}
+                  queuePosition={queuePosition}
+                />
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Network Analysis Tests Section */}
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-bold text-white mb-2">Network Analysis Tests</h2>
+            <p className="text-white/70">
+              Network security and connectivity analysis tests. Some tests require explicit permission.
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {TESTS_BY_CATEGORY.network?.map((testConfig) => {
+              const queueItem = testQueue.find(q => q.testConfig.id === testConfig.id)
+              const queuePosition = queueItem ? testQueue.indexOf(queueItem) + 1 : null
+              const isRestricted = testConfig.requiresPermission === true
+              
+              return (
+                <PerformanceTestCard
+                  key={testConfig.id}
+                  testConfig={testConfig}
+                  onRun={handleRunPerformanceTest}
+                  disabled={running || currentTestId !== null}
+                  queuePosition={queuePosition}
+                  requiresPermission={isRestricted}
+                />
+              )
+            })}
+          </div>
+        </div>
+
       </div>
 
       {/* Embedded Browser View - Shows screenshots during test execution, hides when results arrive */}
