@@ -1,5 +1,15 @@
 export default function HistogramChart({ data, title }) {
-  if (!data || data.length === 0) return null
+  // Show empty state message if no data
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-black/30 p-6 rounded-2xl border border-white/10">
+        <h4 className="text-lg font-bold text-white mb-4">{title}</h4>
+        <div className="h-64 flex items-center justify-center">
+          <p className="text-slate-400 text-sm">No data available</p>
+        </div>
+      </div>
+    )
+  }
 
   const maxValue = Math.max(...data.map(d => d.value || 0))
 

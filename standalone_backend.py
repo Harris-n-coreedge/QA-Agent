@@ -433,6 +433,10 @@ async def _execute_test_queue():
                 
                 result = await task
                 
+                # Add target_url to metrics if available (for network tests)
+                if "target_url" in test_params and isinstance(result, dict):
+                    result["target_url"] = test_params["target_url"]
+                
                 # Format result into standardized structure
                 completed_at = datetime.utcnow()
                 started_at = datetime.fromisoformat(test_results[test_id]["started_at"])
@@ -497,6 +501,10 @@ def _format_standardized_result(
     duration_ms = 0
     if completed_at:
         duration_ms = (completed_at - started_at).total_seconds() * 1000
+    
+    # Extract error from metrics if not provided directly
+    if not error and isinstance(metrics, dict) and "error" in metrics:
+        error = metrics.get("error")
     
     # Create visualizations based on metrics
     visualizations = _create_visualizations(test_type, metrics)
@@ -603,47 +611,84 @@ def _create_visualizations(test_type: str, metrics: Dict[str, Any]) -> Dict[str,
             visualizations["ping_times"] = {
                 "type": "line",
                 "data": [
-                    {"time": f"Ping {i+1}", "value": time} 
+                    {"time": f"Ping {i+1}", "value": time, "label": f"Ping {i+1}"} 
                     for i, time in enumerate(metrics["ping_times"])
                 ],
-                "title": "Ping Times"
+                "title": "Ping Times (ms)"
             }
         
-        if "connection_tests" in metrics:
+        # Connection tests visualization
+        connection_data = []
+        # Use connection_tests dict if available, otherwise use direct metrics
+        if "connection_tests" in metrics and metrics["connection_tests"]:
+            for test, success in metrics["connection_tests"].items():
+                connection_data.append({
+                    "label": test.upper(),
+                    "value": 1 if success else 0,
+                    "success": bool(success)
+                })
+        else:
+            # Fallback to direct connection metrics
+            if "http_connection" in metrics:
+                http_success = bool(metrics.get("http_connection"))
+                connection_data.append({
+                    "label": "HTTP",
+                    "value": 1 if http_success else 0,
+                    "success": http_success
+                })
+            if "https_connection" in metrics:
+                https_success = bool(metrics.get("https_connection"))
+                connection_data.append({
+                    "label": "HTTPS",
+                    "value": 1 if https_success else 0,
+                    "success": https_success
+                })
+        
+        if connection_data:
             visualizations["connection_tests"] = {
                 "type": "bar",
-                "data": [
-                    {"label": test, "value": 1 if success else 0} 
-                    for test, success in metrics["connection_tests"].items()
-                ],
+                "data": connection_data,
                 "title": "Connection Test Results"
             }
     
     elif test_type.startswith("protocol_traffic") or test_type.startswith("protocol"):
         # Protocol traffic analysis visualizations
+        # Always create protocol distribution visualization, even if empty
         if "protocol_distribution" in metrics:
+            # Filter out transport layer protocols (TCP, UDP, ICMP) from visualization
+            # They're shown in summary text but not in the chart to avoid confusion
+            transport_protocols = {'TCP', 'UDP', 'ICMP'}
+            protocol_data = [
+                {"label": protocol, "value": count} 
+                for protocol, count in metrics["protocol_distribution"].items()
+                if protocol not in transport_protocols
+            ]
+            # If empty, add a placeholder to show "No data"
+            if not protocol_data:
+                protocol_data = [{"label": "No Data", "value": 0}]
+            
             visualizations["protocol_distribution"] = {
                 "type": "bar",
-                "data": [
-                    {"label": protocol, "value": count} 
-                    for protocol, count in metrics["protocol_distribution"].items()
-                ],
+                "data": protocol_data,
                 "title": "Protocol Distribution"
             }
         
-        if "packet_sizes" in metrics and metrics["packet_sizes"]:
+        # Always create packet size distribution, even if empty
+        if "packet_sizes" in metrics:
             # Create histogram data
             size_ranges = {"0-100": 0, "100-500": 0, "500-1000": 0, "1000+": 0}
-            for size in metrics["packet_sizes"]:
-                if size < 100:
-                    size_ranges["0-100"] += 1
-                elif size < 500:
-                    size_ranges["100-500"] += 1
-                elif size < 1000:
-                    size_ranges["500-1000"] += 1
-                else:
-                    size_ranges["1000+"] += 1
+            if metrics["packet_sizes"]:
+                for size in metrics["packet_sizes"]:
+                    if size < 100:
+                        size_ranges["0-100"] += 1
+                    elif size < 500:
+                        size_ranges["100-500"] += 1
+                    elif size < 1000:
+                        size_ranges["500-1000"] += 1
+                    else:
+                        size_ranges["1000+"] += 1
             
+            # Always create the visualization, even with zero values
             visualizations["packet_size_distribution"] = {
                 "type": "histogram",
                 "data": [
@@ -890,6 +935,13 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
     # Network test summaries
     elif test_type.startswith("ssl_tls") or test_type.startswith("ssl") or test_type.startswith("tls"):
         summary_text = []
+        
+        # Add target URL at the top
+        target_url = metrics.get("target_url", "Unknown")
+        if target_url and target_url != "Unknown":
+            summary_text.append(f"## Test Target\n")
+            summary_text.append(f"**Website:** [{target_url}]({target_url}) — Target being tested\n\n")
+        
         summary_text.append("## Certificate Information\n")
         
         # Initialize days_remaining before the if/else block
@@ -992,11 +1044,18 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
     
     elif test_type.startswith("dns"):
         summary_text = []
+        
+        # Add target URL at the top
+        target_url = metrics.get("target_url", "Unknown")
+        if target_url and target_url != "Unknown":
+            summary_text.append(f"## Test Target\n")
+            summary_text.append(f"**Website:** [{target_url}]({target_url}) — Target being tested\n\n")
+        
         summary_text.append("## DNS Performance\n")
         avg_time = metrics.get("average_resolution_time", 0)
         summary_text.append(f"**Average Resolution Time:** {avg_time:.2f} ms — DNS query response time\n")
         summary_text.append(f"**DNSSEC Status:** {'Enabled' if metrics.get('dnssec_enabled') else 'Disabled'} — DNSSEC validation status\n")
-        summary_text.append(f"**DNS Leak Test:** {'Failed' if metrics.get('dns_leak_detected') else 'Passed'} — Privacy leak detection\n")
+        summary_text.append(f"**DNS Leak Test:** {'Potential Leak Detected' if metrics.get('dns_leak_detected') else 'No Leak Detected'} — Privacy leak detection\n")
         
         summary_text.append("\n## DNS Servers\n")
         dns_servers = metrics.get("dns_servers", [])
@@ -1004,16 +1063,38 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
             for i, server in enumerate(dns_servers, 1):
                 summary_text.append(f"**Server {i}:** {server}\n")
         
-        if metrics.get("dns_leak_detected"):
-            summary_text.append(f"\n**Leaked Servers:** {', '.join(metrics.get('leaked_servers', []))} — Servers that received queries\n")
+        # DNS Leak Status
+        dns_leak_detected = metrics.get("dns_leak_detected", False)
+        leaked_servers = metrics.get("leaked_servers", [])
+        if dns_leak_detected and leaked_servers:
+            summary_text.append(f"\n**DNS Leak Status:** Potential leak detected — Public DNS servers ({', '.join(leaked_servers)}) detected alongside other servers\n")
+            summary_text.append("**Note:** This may indicate queries are bypassing your intended DNS servers (e.g., VPN DNS). Verify your DNS configuration.\n")
+        elif not dns_leak_detected and dns_servers:
+            summary_text.append(f"\n**DNS Leak Status:** No leak detected — DNS configuration appears consistent\n")
         
         summary_text.append("\n## Recommendations\n")
-        if not metrics.get("dnssec_enabled"):
-            summary_text.append("• Enable DNSSEC for improved DNS security\n")
-        if metrics.get("dns_leak_detected"):
-            summary_text.append("• Configure DNS servers to prevent leaks\n")
-        if avg_time > 100:
-            summary_text.append(f"• DNS resolution time ({avg_time:.2f}ms) is high — Consider using faster DNS servers\n")
+        
+        # Add recommendations from metrics if they exist
+        recommendations = metrics.get("recommendations", [])
+        valid_recommendations = [r for r in recommendations if r and isinstance(r, str) and r.strip()]
+        for rec in valid_recommendations:
+            summary_text.append(f"• {rec}\n")
+        
+        # Add fallback recommendations if none were provided
+        if not valid_recommendations:
+            if not metrics.get("dnssec_enabled"):
+                summary_text.append("• Enable DNSSEC for improved DNS security and protection against DNS spoofing\n")
+            if dns_leak_detected:
+                summary_text.append("• Review DNS configuration — Ensure queries go to intended servers (e.g., VPN DNS if using VPN)\n")
+                summary_text.append("• Consider using a single consistent DNS provider to avoid potential leaks\n")
+            if avg_time > 100:
+                summary_text.append(f"• DNS resolution time ({avg_time:.2f}ms) is high — Consider using faster DNS servers like Cloudflare (1.1.1.1) or Google (8.8.8.8)\n")
+        else:
+            # If we have recommendations from metrics, add additional context if needed
+            if dns_leak_detected and not any("leak" in r.lower() for r in valid_recommendations):
+                summary_text.append("• Review DNS configuration — Ensure queries go to intended servers (e.g., VPN DNS if using VPN)\n")
+            if avg_time > 100 and not any("resolution time" in r.lower() or "slow" in r.lower() for r in valid_recommendations):
+                summary_text.append(f"• DNS resolution time ({avg_time:.2f}ms) is high — Consider using faster DNS servers\n")
         
         summary = {
             "average_resolution_time_ms": avg_time,
@@ -1025,6 +1106,13 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
     
     elif test_type.startswith("connectivity"):
         summary_text = []
+        
+        # Add target URL at the top
+        target_url = metrics.get("target_url", "Unknown")
+        if target_url and target_url != "Unknown":
+            summary_text.append(f"## Test Target\n")
+            summary_text.append(f"**Website:** [{target_url}]({target_url}) — Target being tested\n\n")
+        
         summary_text.append("## Connectivity Test Results\n")
         summary_text.append(f"**Ping Test:** {'Success' if metrics.get('ping_success') else 'Failed'} — ICMP connectivity\n")
         summary_text.append(f"**DNS Resolution:** {'Success' if metrics.get('dns_resolution') else 'Failed'} — DNS query test\n")
@@ -1032,9 +1120,15 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
         summary_text.append(f"**HTTPS Connection:** {'Success' if metrics.get('https_connection') else 'Failed'} — HTTPS connectivity\n")
         
         summary_text.append("\n## Performance Metrics\n")
-        avg_ping = metrics.get("average_ping_time", 0)
+        avg_ping = metrics.get("average_ping_time")
         dns_time = metrics.get("dns_resolution_time", 0)
-        summary_text.append(f"**Average Ping Time:** {avg_ping:.2f} ms — Network latency\n")
+        
+        # Handle None/None ping time (failed ping)
+        if avg_ping is None or (avg_ping == 0 and not metrics.get("ping_success")):
+            summary_text.append(f"**Average Ping Time:** N/A — Ping test failed\n")
+        else:
+            summary_text.append(f"**Average Ping Time:** {avg_ping:.2f} ms — Network latency\n")
+        
         summary_text.append(f"**DNS Resolution Time:** {dns_time:.2f} ms — DNS query time\n")
         
         success_count = sum([
@@ -1048,25 +1142,69 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
         
         summary_text.append("\n## Diagnostics\n")
         issues = metrics.get("issues_found", [])
+        
+        # Add ping failure to issues if not already present
+        if not metrics.get("ping_success") and not any("ping" in str(issue).lower() for issue in issues):
+            issues.append("Ping test failed - host may be unreachable or ICMP blocked")
+        
         if issues:
             summary_text.append("**Issues Found:**\n")
             for issue in issues:
                 summary_text.append(f"• {issue}\n")
+            
+            # Add explanation for ping failures
+            if not metrics.get("ping_success"):
+                summary_text.append("\n**Why Ping May Fail:**\n")
+                
+                # Check for Windows Npcap issue
+                issues_text = " ".join([str(issue) for issue in issues]).lower()
+                if "npcap" in issues_text or "windows" in issues_text:
+                    summary_text.append("• **Windows Npcap Required**: On Windows, Scapy requires Npcap library or administrator privileges to send ICMP packets\n")
+                    summary_text.append("  - **Solution**: Install Npcap from https://npcap.com/ (recommended)\n")
+                    summary_text.append("  - **Alternative**: Run the application as administrator\n")
+                
+                summary_text.append("• **ICMP Blocking**: Many websites/servers block ICMP (ping) for security reasons\n")
+                summary_text.append("• **Firewall Rules**: Local or remote firewalls may block ICMP packets\n")
+                summary_text.append("• **Privileges**: Sending ICMP packets requires administrator/root privileges on some systems\n")
+                summary_text.append("• **Network Configuration**: Some networks disable ICMP entirely\n")
+                summary_text.append("• **Note**: Ping failure does NOT mean the website is down - HTTP/HTTPS connections can still work\n")
         else:
             summary_text.append("**No issues detected** — All connectivity tests passed\n")
         
         summary_text.append("\n## Recommendations\n")
         recommendations = metrics.get("recommendations", [])
-        if recommendations:
-            for rec in recommendations:
-                summary_text.append(f"• {rec}\n")
+        valid_recommendations = [r for r in recommendations if r and isinstance(r, str) and r.strip()]
+        
+        # Add recommendations from metrics if they exist
+        for rec in valid_recommendations:
+            summary_text.append(f"• {rec}\n")
+        
+        # Add fallback recommendations if none were provided
+        if not valid_recommendations:
+            # Check for specific issues and provide recommendations
+            if not metrics.get("ping_success"):
+                summary_text.append("• Host may be unreachable or firewall blocking ICMP — Ping test failed\n")
+            if not metrics.get("dns_resolution"):
+                summary_text.append("• DNS resolution failed — Check DNS server configuration\n")
+            if not metrics.get("http_connection") and not metrics.get("https_connection"):
+                summary_text.append("• No HTTP/HTTPS connectivity — Check firewall rules and server status\n")
+            elif not metrics.get("https_connection") and metrics.get("http_connection"):
+                summary_text.append("• HTTPS connection failed but HTTP succeeded — Check SSL/TLS configuration\n")
+            
+            # If everything is working, provide positive feedback
+            if (metrics.get("ping_success") and 
+                metrics.get("dns_resolution") and 
+                metrics.get("http_connection") and 
+                metrics.get("https_connection")):
+                summary_text.append("• All connectivity tests passed — Network connectivity is healthy\n")
+                summary_text.append("• Consider monitoring these metrics regularly to detect issues early\n")
         
         summary = {
             "ping_success": metrics.get("ping_success", False),
             "dns_resolution": metrics.get("dns_resolution", False),
             "http_connection": metrics.get("http_connection", False),
             "https_connection": metrics.get("https_connection", False),
-            "average_ping_time_ms": avg_ping,
+            "average_ping_time_ms": avg_ping if avg_ping is not None else None,
             "dns_resolution_time_ms": dns_time,
             "connection_success_rate": success_rate,
             "issues_count": len(issues),
@@ -1075,19 +1213,56 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
     
     elif test_type.startswith("protocol_traffic") or test_type.startswith("protocol"):
         summary_text = []
+        
+        # Add target URL at the top
+        target_url = metrics.get("target_url", "Unknown")
+        if target_url and target_url != "Unknown":
+            summary_text.append(f"## Test Target\n")
+            summary_text.append(f"**Website:** [{target_url}]({target_url}) — Target being tested\n\n")
+        
         summary_text.append("## Traffic Overview\n")
         total_packets = metrics.get("total_packets", 0)
         traffic_volume = metrics.get("traffic_volume_bytes", 0)
-        summary_text.append(f"**Total Packets:** {total_packets:,} — Packets captured\n")
-        summary_text.append(f"**Protocols Detected:** {', '.join(metrics.get('protocols_detected', []))} — Network protocols found\n")
-        summary_text.append(f"**Traffic Volume:** {traffic_volume / (1024*1024):.2f} MB — Total data transferred\n")
+        analysis_method = metrics.get("analysis_method", "packet_capture")
+        
+        if analysis_method == "application_level":
+            summary_text.append(f"**Total Packets:** {total_packets:,} — Estimated packets (application-level analysis)\n")
+            summary_text.append(f"**Protocols Detected:** {', '.join(metrics.get('protocols_detected', []))} — Network protocols found\n")
+            summary_text.append(f"**Traffic Volume:** {traffic_volume / (1024*1024):.2f} MB — Total data transferred\n")
+            if metrics.get("note"):
+                summary_text.append(f"**Note:** {metrics.get('note')}\n")
+        else:
+            summary_text.append(f"**Total Packets:** {total_packets:,} — Packets captured\n")
+            summary_text.append(f"**Protocols Detected:** {', '.join(metrics.get('protocols_detected', []))} — Network protocols found\n")
+            summary_text.append(f"**Traffic Volume:** {traffic_volume / (1024*1024):.2f} MB — Total data transferred\n")
         
         summary_text.append("\n## Protocol Distribution\n")
         protocol_dist = metrics.get("protocol_distribution", {})
-        total_protocol_packets = sum(protocol_dist.values())
-        for protocol, count in protocol_dist.items():
-            percentage = (count / total_protocol_packets * 100) if total_protocol_packets > 0 else 0
-            summary_text.append(f"**{protocol}:** {percentage:.1f}% — {count} packets\n")
+        
+        # Separate application protocols from transport protocols
+        app_protocols = [p for p in protocol_dist.keys() if p not in ['TCP', 'UDP', 'ICMP']]
+        transport_protocols = [p for p in protocol_dist.keys() if p in ['TCP', 'UDP', 'ICMP']]
+        
+        if app_protocols and transport_protocols:
+            # Calculate percentages based on application protocols only for cleaner display
+            app_total = sum(protocol_dist[p] for p in app_protocols)
+            
+            # Show application protocols
+            for protocol in app_protocols:
+                count = protocol_dist[protocol]
+                percentage = (count / app_total * 100) if app_total > 0 else 0
+                summary_text.append(f"**{protocol}:** {percentage:.1f}% — {count} packets\n")
+            
+            # Show transport protocols separately (they're the underlying layer)
+            for protocol in transport_protocols:
+                count = protocol_dist[protocol]
+                summary_text.append(f"**{protocol}:** {count} packets (transport layer)\n")
+        elif protocol_dist:
+            # Normal display if no special handling needed
+            total_protocol_packets = sum(protocol_dist.values())
+            for protocol, count in protocol_dist.items():
+                percentage = (count / total_protocol_packets * 100) if total_protocol_packets > 0 else 0
+                summary_text.append(f"**{protocol}:** {percentage:.1f}% — {count} packets\n")
         
         summary_text.append("\n## Analysis\n")
         if protocol_dist:
@@ -1107,9 +1282,17 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
     
     elif test_type.startswith("network_security") or test_type.startswith("security_scan"):
         summary_text = []
+        
+        # Add target URL at the top (prefer target_url from metrics, fallback to target)
+        target_url = metrics.get("target_url") or metrics.get("target", "Unknown")
+        if target_url and target_url != "Unknown":
+            summary_text.append(f"## Test Target\n")
+            summary_text.append(f"**Website:** [{target_url}]({target_url}) — Target being tested\n\n")
+        
         summary_text.append("## Scan Results\n")
-        target = metrics.get("target", "Unknown")
-        summary_text.append(f"**Target:** {target}\n")
+        target = metrics.get("target", target_url)
+        if target and target != target_url:  # Only show if different from target_url
+            summary_text.append(f"**Target:** {target}\n")
         summary_text.append(f"**Ports Scanned:** {metrics.get('ports_scanned', 0)} — Total ports tested\n")
         summary_text.append(f"**Open Ports:** {len(metrics.get('open_ports', []))} — Ports accepting connections\n")
         summary_text.append(f"**Filtered Ports:** {len(metrics.get('filtered_ports', []))} — Ports with firewall filtering\n")
@@ -1153,6 +1336,13 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
     
     elif test_type.startswith("endpoint_discovery") or (test_type.startswith("endpoint") and not test_type.startswith("endpoint_performance")):
         summary_text = []
+        
+        # Add target URL at the top
+        target_url = metrics.get("target_url") or metrics.get("target", "Unknown")
+        if target_url and target_url != "Unknown":
+            summary_text.append(f"## Test Target\n")
+            summary_text.append(f"**Website:** [{target_url}]({target_url}) — Target being tested\n\n")
+        
         summary_text.append("## Discovery Results\n")
         total_endpoints = metrics.get("total_endpoints", 0)
         summary_text.append(f"**Total Endpoints Found:** {total_endpoints} — API endpoints discovered\n")

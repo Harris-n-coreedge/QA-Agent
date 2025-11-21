@@ -134,11 +134,12 @@ function TestResultCard({ result }) {
                   try {
                     if (!viz || !viz.type || !viz.data) return null
                     
-                    if (viz.type === 'line' && Array.isArray(viz.data) && viz.data.length > 0) {
+                    // Show visualizations even with empty data (they'll show zeros/empty state)
+                    if (viz.type === 'line' && Array.isArray(viz.data)) {
                       return <LineChart key={key} data={viz.data} title={viz.title || key} />
-                    } else if (viz.type === 'bar' && Array.isArray(viz.data) && viz.data.length > 0) {
+                    } else if (viz.type === 'bar' && Array.isArray(viz.data)) {
                       return <BarChartComponent key={key} data={viz.data} title={viz.title || key} />
-                    } else if (viz.type === 'histogram' && Array.isArray(viz.data) && viz.data.length > 0) {
+                    } else if (viz.type === 'histogram' && Array.isArray(viz.data)) {
                       return <HistogramChart key={key} data={viz.data} title={viz.title || key} />
                     }
                     return null
@@ -213,6 +214,11 @@ function TestResultCard({ result }) {
                 {Object.entries(result.summary || {})
                   .filter(([key]) => key !== 'summary_text') // Exclude summary_text from cards
                   .filter(([key, value]) => value != null && value !== undefined) // Filter out null/undefined
+                  .filter(([key]) => {
+                    // Exclude keys that will be shown in metrics section to avoid duplicates
+                    const excludeKeys = ['analysis_method', 'note', 'target_url'] // These are shown elsewhere
+                    return !excludeKeys.includes(key)
+                  })
                   .map(([key, value]) => {
                     let color = 'slate'
                     let unit = ''
@@ -274,6 +280,35 @@ function TestResultCard({ result }) {
               <h4 className="text-xl font-bold text-white mb-4">Metrics</h4>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {Object.entries(result.metrics).map(([key, value]) => {
+                  // Skip metrics that are already shown in summary to avoid duplicates
+                  const summaryKeys = result.summary ? Object.keys(result.summary) : []
+                  const isDuplicateInSummary = summaryKeys.some(sk => {
+                    const normalizedSk = sk.toLowerCase().replace(/_/g, '').replace(/\s/g, '')
+                    const normalizedKey = key.toLowerCase().replace(/_/g, '').replace(/\s/g, '')
+                    return normalizedSk === normalizedKey || 
+                           (normalizedKey.includes('packet') && normalizedSk.includes('packet')) ||
+                           (normalizedKey.includes('traffic') && normalizedSk.includes('traffic'))
+                  })
+                  if (isDuplicateInSummary && key !== 'error') return null
+                  
+                  // Show error messages prominently
+                  if (key === 'error' && value) {
+                    return (
+                      <div key={key} className="col-span-full">
+                        <div className="bg-gradient-to-r from-red-500/25 to-red-500/15 text-red-100 p-6 rounded-2xl border border-red-500/40 shadow-xl">
+                          <h5 className="text-lg font-bold mb-2 text-red-300 flex items-center gap-2">
+                            <XCircle className="w-5 h-5" />
+                            Error
+                          </h5>
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap">{String(value)}</p>
+                        </div>
+                      </div>
+                    )
+                  }
+                  
+                  // Skip 'note' field - it's informational and shown in summary text
+                  if (key === 'note') return null
+                  
                   if (Array.isArray(value)) return null // Skip arrays, they're handled separately
                   if (value == null || value === undefined) return null // Skip null/undefined values
                   if (typeof value === 'object') return null // Skip objects, they're handled separately
@@ -393,24 +428,24 @@ function TestResultCard({ result }) {
                           </div>
                           
                           {parsed.text && parsed.structured ? (
-                            <div className="space-y-4">
-                              <details className="bg-black/30 border border-white/10 rounded-lg p-4">
-                                <summary className="text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
-                                  📊 Structured Data (Click to expand)
-                                </summary>
-                                <pre className="text-cyan-300 whitespace-pre-wrap leading-relaxed text-xs font-mono mt-2 max-h-[400px] overflow-y-auto">
-                                  {JSON.stringify(parsed.structured, null, 2)}
-                                </pre>
-                              </details>
-                              <details open className="bg-black/30 border border-white/10 rounded-lg p-4">
-                                <summary className="flex items-center gap-2 text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
-                                  <FileText className="w-4 h-4 text-slate-400" />
-                                  <span>Text Output (Click to collapse)</span>
-                                </summary>
-                                <pre className="text-white/90 whitespace-pre-wrap leading-relaxed text-sm font-mono mt-2 max-h-[400px] overflow-y-auto">
-                                  {parsed.text}
-                                </pre>
-                              </details>
+                        <div className="space-y-4">
+                          <details className="bg-black/30 border border-white/10 rounded-lg p-4">
+                            <summary className="text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
+                              📊 Structured Data (Click to expand)
+                            </summary>
+                            <pre className="text-cyan-300 whitespace-pre-wrap leading-relaxed text-xs font-mono mt-2 max-h-[400px] overflow-y-auto">
+                              {JSON.stringify(parsed.structured, null, 2)}
+                            </pre>
+                          </details>
+                          <details open className="bg-black/30 border border-white/10 rounded-lg p-4">
+                            <summary className="flex items-center gap-2 text-white/70 text-sm cursor-pointer hover:text-white font-semibold mb-2">
+                              <FileText className="w-4 h-4 text-slate-400" />
+                              <span>Text Output (Click to collapse)</span>
+                            </summary>
+                            <pre className="text-white/90 whitespace-pre-wrap leading-relaxed text-sm font-mono mt-2 max-h-[400px] overflow-y-auto">
+                              {parsed.text}
+                            </pre>
+                          </details>
                             </div>
                           ) : (
                             <details open className="bg-black/30 border border-white/10 rounded-lg p-4">
@@ -530,54 +565,54 @@ function TestResults() {
   // Filter and sort results
   const filteredResults = useMemo(() => {
     try {
-      if (!results?.results) return []
+    if (!results?.results) return []
     
-      let filtered = [...results.results]
-      
-      // Search filter
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase()
-        filtered = filtered.filter(r => 
+    let filtered = [...results.results]
+    
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(r => 
           (r.command || r.test_name || '').toLowerCase().includes(query) ||
-          normalizeResultText(r.result).toLowerCase().includes(query) ||
+        normalizeResultText(r.result).toLowerCase().includes(query) ||
           (r.test_id || '').toLowerCase().includes(query)
-        )
-      }
-      
-      // Status filter
-      if (statusFilter !== 'all') {
-        filtered = filtered.filter(r => r.status === statusFilter)
-      }
-      
-      // Test type filter
-      if (testTypeFilter !== 'all') {
-        filtered = filtered.filter(r => {
+      )
+    }
+    
+    // Status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(r => r.status === statusFilter)
+    }
+    
+    // Test type filter
+    if (testTypeFilter !== 'all') {
+      filtered = filtered.filter(r => {
           const cmd = (r.command || r.test_name || '').toLowerCase()
-          if (testTypeFilter === 'auto-check') return cmd.includes('auto check') || cmd.includes('auto-check')
-          if (testTypeFilter === 'auto-audit') return cmd.includes('auto audit') || cmd.includes('auto-audit')
-          if (testTypeFilter === 'browser-use') return cmd.includes('test case') || cmd.includes('verify') || cmd.includes('check')
-          if (testTypeFilter === 'mobile') return r.device || r.screenshots?.length > 0
-          if (testTypeFilter === 'cross-browser') return cmd.includes('cross-browser') || cmd.includes('cross browser')
-          return true
-        })
-      }
-      
-      // Sort
-      filtered.sort((a, b) => {
-        if (sortBy === 'date') {
+        if (testTypeFilter === 'auto-check') return cmd.includes('auto check') || cmd.includes('auto-check')
+        if (testTypeFilter === 'auto-audit') return cmd.includes('auto audit') || cmd.includes('auto-audit')
+        if (testTypeFilter === 'browser-use') return cmd.includes('test case') || cmd.includes('verify') || cmd.includes('check')
+        if (testTypeFilter === 'mobile') return r.device || r.screenshots?.length > 0
+        if (testTypeFilter === 'cross-browser') return cmd.includes('cross-browser') || cmd.includes('cross browser')
+        return true
+      })
+    }
+    
+    // Sort
+    filtered.sort((a, b) => {
+      if (sortBy === 'date') {
           const dateA = a.started_at ? new Date(a.started_at) : new Date(0)
           const dateB = b.started_at ? new Date(b.started_at) : new Date(0)
           return dateB - dateA
-        } else if (sortBy === 'duration') {
-          return (b.duration_ms || 0) - (a.duration_ms || 0)
-        } else if (sortBy === 'status') {
-          const statusOrder = { passed: 1, completed: 2, failed: 3, running: 4, pending: 5 }
-          return (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99)
-        }
-        return 0
-      })
-      
-      return filtered
+      } else if (sortBy === 'duration') {
+        return (b.duration_ms || 0) - (a.duration_ms || 0)
+      } else if (sortBy === 'status') {
+        const statusOrder = { passed: 1, completed: 2, failed: 3, running: 4, pending: 5 }
+        return (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99)
+      }
+      return 0
+    })
+    
+    return filtered
     } catch (error) {
       console.error('Error filtering test results:', error)
       return []
@@ -874,8 +909,8 @@ function TestResults() {
             try {
               return (
                 <div key={result.test_id || idx} style={{ animationDelay: `${idx * 0.1}s` }}>
-                  <TestResultCard result={result} />
-                </div>
+              <TestResultCard result={result} />
+            </div>
               )
             } catch (error) {
               console.error(`Error rendering test result ${result.test_id}:`, error)
