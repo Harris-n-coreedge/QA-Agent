@@ -75,14 +75,14 @@ export default function LineChart({ data, title, xLabel = 'Time', yLabel = 'Valu
             const y = 250 - (i / numLabels) * 250
             return (
               <g key={i}>
-                <line
+            <line
                   x1="40"
                   y1={y}
                   x2="420"
                   y2={y}
                   stroke="rgba(255, 255, 255, 0.08)"
-                  strokeWidth="1"
-                />
+              strokeWidth="1"
+            />
                 <text
                   x="35"
                   y={y + 4}
@@ -98,21 +98,21 @@ export default function LineChart({ data, title, xLabel = 'Time', yLabel = 'Valu
           
           {/* Area under curve */}
           {data.length > 0 && (
-            <path
+          <path
               d={`M 40,${250 - ((data[0]?.value || adjustedMin) - adjustedMin) / range * 250} ${data.map((d, i) => `L ${40 + (i / Math.max(1, data.length - 1)) * 380},${250 - ((d.value || adjustedMin) - adjustedMin) / range * 250}`).join(' ')} L ${40 + (data.length - 1) / Math.max(1, data.length - 1) * 380},250 L 40,250 Z`}
               fill={`url(#lineGradient-${title})`}
-            />
+          />
           )}
           
           {/* Line */}
           {data.length > 1 && (
-            <polyline
+          <polyline
               points={data.map((d, i) => `${40 + (i / Math.max(1, data.length - 1)) * 380},${250 - ((d.value || adjustedMin) - adjustedMin) / range * 250}`).join(' ')}
-              fill="none"
-              stroke="rgb(59, 130, 246)"
+            fill="none"
+            stroke="rgb(59, 130, 246)"
               strokeWidth="2.5"
               filter={`url(#glow-${title})`}
-            />
+          />
           )}
           
           {/* Data points */}
@@ -121,11 +121,11 @@ export default function LineChart({ data, title, xLabel = 'Time', yLabel = 'Valu
             const y = 250 - ((d.value || adjustedMin) - adjustedMin) / range * 250
             return (
               <g key={i}>
-                <circle
+            <circle
                   cx={x}
                   cy={y}
                   r="5"
-                  fill="rgb(59, 130, 246)"
+              fill="rgb(59, 130, 246)"
                   stroke="white"
                   strokeWidth="1.5"
                   className="hover:r-7 transition-all"

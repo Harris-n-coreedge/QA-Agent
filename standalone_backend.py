@@ -700,7 +700,26 @@ def _create_visualizations(test_type: str, metrics: Dict[str, Any]) -> Dict[str,
     
     elif test_type.startswith("network_security") or test_type.startswith("security_scan"):
         # Network security scan visualizations
-        if "open_ports" in metrics:
+        # Always create port status visualization, even if empty
+        port_status = {
+            "Open": len(metrics.get("open_ports", [])),
+            "Closed": len(metrics.get("closed_ports", [])),
+            "Filtered": len(metrics.get("filtered_ports", []))
+        }
+        
+        # Create port status chart (always show, even with zeros)
+        port_status_data = [
+            {"label": status, "value": count} 
+            for status, count in port_status.items()
+        ]
+        visualizations["port_status"] = {
+            "type": "bar",
+            "data": port_status_data,
+            "title": "Port Status Distribution"
+        }
+        
+        # Open ports by service (only if there are open ports)
+        if "open_ports" in metrics and metrics["open_ports"]:
             # Group by service type
             service_counts = {}
             for port_data in metrics["open_ports"]:
@@ -716,21 +735,6 @@ def _create_visualizations(test_type: str, metrics: Dict[str, Any]) -> Dict[str,
                     ],
                     "title": "Open Ports by Service Type"
                 }
-        
-        if "open_ports" in metrics or "closed_ports" in metrics or "filtered_ports" in metrics:
-            port_status = {
-                "Open": len(metrics.get("open_ports", [])),
-                "Closed": len(metrics.get("closed_ports", [])),
-                "Filtered": len(metrics.get("filtered_ports", []))
-            }
-            visualizations["port_status"] = {
-                "type": "bar",
-                "data": [
-                    {"label": status, "value": count} 
-                    for status, count in port_status.items() if count > 0
-                ],
-                "title": "Port Status Distribution"
-            }
     
     elif test_type.startswith("endpoint_discovery") or (test_type.startswith("endpoint") and not test_type.startswith("endpoint_performance")):
         # Endpoint discovery visualizations
@@ -774,13 +778,16 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
     """Create summary statistics based on test type with human-readable analysis"""
     summary = {}
     
-    # Check for all load test variations
-    if (test_type.startswith("load") or test_type.startswith("stress") or 
+    # Handle endpoint_discovery FIRST (before load test check)
+    # This prevents it from matching the load test condition
+    # Check for all load test variations (exclude endpoint_discovery)
+    if ((test_type.startswith("load") or test_type.startswith("stress") or 
         test_type.startswith("spike") or test_type.startswith("soak") or
         test_type.startswith("ramp") or test_type.startswith("throughput") or
-        test_type.startswith("endpoint") or test_type.startswith("api") or
+        test_type.startswith("endpoint_performance") or test_type.startswith("api") or
         test_type.startswith("website") or test_type.startswith("volume") or
-        test_type.startswith("concurrent") or test_type.startswith("response_time")):
+        test_type.startswith("concurrent") or test_type.startswith("response_time")) and
+        not test_type.startswith("endpoint_discovery")):
         
         total_requests = metrics.get("total_requests", 0)
         successful_requests = metrics.get("successful_requests", 0)
@@ -1334,7 +1341,7 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
             "summary_text": "".join(summary_text)
         }
     
-    elif test_type.startswith("endpoint_discovery") or (test_type.startswith("endpoint") and not test_type.startswith("endpoint_performance")):
+    if test_type.startswith("endpoint_discovery") or (test_type.startswith("endpoint") and not test_type.startswith("endpoint_performance")):
         summary_text = []
         
         # Add target URL at the top
@@ -1355,24 +1362,37 @@ def _create_summary(test_type: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
         
         summary_text.append("\n## Endpoint Analysis\n")
         endpoints = metrics.get("endpoints_found", [])
+        # Count successful (2xx) vs failed (4xx/5xx) endpoints
+        successful_count = sum(1 for e in endpoints if 200 <= e.get("status_code", 0) < 300)
+        failed_count = sum(1 for e in endpoints if e.get("status_code", 0) >= 400)
         public_count = sum(1 for e in endpoints if e.get("status_code", 0) < 400)
         protected_count = sum(1 for e in endpoints if e.get("status_code", 0) >= 400)
-        summary_text.append(f"**Public Endpoints:** {public_count} — Endpoints without authentication\n")
-        summary_text.append(f"**Protected Endpoints:** {protected_count} — Endpoints requiring auth\n")
+        
+        summary_text.append(f"**Successful Endpoints:** {successful_count} — Endpoints returning 2xx status\n")
+        summary_text.append(f"**Not Found Endpoints:** {failed_count} — Endpoints returning 4xx status (may be missing or protected)\n")
+        summary_text.append(f"**Unprotected Endpoints:** {public_count} — Endpoints accessible without authentication\n")
+        summary_text.append(f"**Protected Endpoints:** {protected_count} — Endpoints requiring auth or returning errors\n")
         
         avg_response = metrics.get("average_response_time", 0)
         summary_text.append(f"**Average Response Time:** {avg_response:.2f} ms — Endpoint performance\n")
         
         summary_text.append("\n## Recommendations\n")
+        if successful_count > 0:
+            summary_text.append(f"• {successful_count} endpoint(s) are accessible — Review security and authentication\n")
+        if failed_count > 0:
+            summary_text.append(f"• {failed_count} endpoint(s) returned 4xx status — May indicate missing or protected endpoints\n")
         if public_count > protected_count:
-            summary_text.append("• Review public endpoints — Ensure proper authentication and authorization\n")
+            summary_text.append("• Review unprotected endpoints — Ensure proper authentication and authorization\n")
         if avg_response > 1000:
             summary_text.append(f"• Optimize slow endpoints — Average response time ({avg_response:.2f}ms) is high\n")
         
         summary = {
             "total_endpoints": total_endpoints,
             "methods_detected_count": len(methods),
-            "public_endpoints_count": public_count,
+            "successful_endpoints_count": successful_count,
+            # Don't include failed_endpoints_count in summary cards - it's shown in summary text
+            # "failed_endpoints_count": failed_count,  # Removed - redundant with summary text
+            "unprotected_endpoints_count": public_count,  # Renamed from public_endpoints_count
             "protected_endpoints_count": protected_count,
             "average_response_time_ms": avg_response,
             "summary_text": "".join(summary_text)

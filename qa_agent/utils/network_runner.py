@@ -1350,9 +1350,10 @@ class NetworkTestRunner:
             "scan_type": scan_type
         }
         
+        # If nmap is not available, use socket-based fallback
         if not NMAP_AVAILABLE:
-            metrics["error"] = "python-nmap not available for port scanning"
-            return metrics
+            logger.info("Nmap not available, using socket-based port scanning fallback")
+            return await self._scan_ports_via_socket(target_url, ports, scan_type, metrics)
         
         try:
             hostname = self._extract_hostname(target_url)
@@ -1477,40 +1478,143 @@ class NetworkTestRunner:
                                 }
                 
             except Exception as e:
-                logger.warning(f"Nmap scan failed: {e}")
-                # Fallback: try basic port scanning with socket
-                for port in ports:
-                    try:
-                        await self.safety_validator.add_rate_limit_delay(target_url)
-                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sock.settimeout(1)
-                        result = sock.connect_ex((hostname, port))
-                        sock.close()
-                        
+                logger.warning(f"Nmap scan failed: {e}, using socket-based fallback")
+                # Fallback: use socket-based scanning
+                return await self._scan_ports_via_socket(target_url, ports, scan_type, metrics)
+            
+        except Exception as e:
+            error_str = str(e)
+            # If it's an nmap not found error, use socket fallback
+            if "nmap program was not found" in error_str or "nmap" in error_str.lower():
+                logger.info("Nmap executable not found, using socket-based fallback")
+                return await self._scan_ports_via_socket(target_url, ports, scan_type, metrics)
+            else:
+                logger.error(f"Network security scan error: {e}", exc_info=True)
+                metrics["error"] = str(e)
+        
+        return metrics
+    
+    async def _scan_ports_via_socket(
+        self,
+        target_url: str,
+        ports: Optional[List[int]],
+        scan_type: str,
+        metrics: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Fallback method: Scan ports using Python's socket library
+        This works without nmap by using socket.connect_ex() to test port connectivity
+        """
+        try:
+            hostname = self._extract_hostname(target_url)
+            
+            # Resolve hostname to IP
+            try:
+                target_ip = socket.gethostbyname(hostname)
+                logger.info(f"Resolved {hostname} to {target_ip}")
+            except socket.gaierror as e:
+                metrics["error"] = f"Could not resolve hostname {hostname}: {str(e)}"
+                metrics["target_url"] = target_url
+                return metrics
+            
+            # Default ports if not specified
+            if not ports:
+                ports = [22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 5432, 8080, 8443]
+            
+            metrics["ports_scanned"] = len(ports)
+            metrics["scan_type"] = scan_type
+            metrics["target_url"] = target_url
+            metrics["analysis_method"] = "socket_based"
+            
+            logger.info(f"Scanning {len(ports)} ports on {hostname} using socket-based method")
+            
+            # Scan each port
+            for port in ports:
+                try:
+                    # Rate limiting between scans
+                    await self.safety_validator.add_rate_limit_delay(target_url)
+                    
+                    # Create socket and attempt connection
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(2.0)  # 2 second timeout
+                    
+                    result = sock.connect_ex((target_ip, port))
+                    sock.close()
+                    
+                    # Determine port state based on result
+                    if result == 0:
+                        # Connection successful - port is open
                         port_data = {
                             "port": port,
-                            "state": "open" if result == 0 else "closed",
+                            "state": "open",
+                            "service": self._guess_service(port),
+                            "version": ""
+                        }
+                        metrics["open_ports"].append(port_data)
+                        metrics["services"][str(port)] = {
+                            "name": port_data["service"],
+                            "version": "",
+                            "state": "open"
+                        }
+                    else:
+                        # Connection failed - port is likely closed or filtered
+                        # We can't distinguish between closed and filtered with basic socket scan
+                        port_data = {
+                            "port": port,
+                            "state": "closed",  # Default to closed (most common)
                             "service": "unknown",
                             "version": ""
                         }
-                        
-                        if result == 0:
-                            metrics["open_ports"].append(port_data)
-                        else:
-                            metrics["closed_ports"].append(port_data)
-                    except Exception:
-                        metrics["filtered_ports"].append({
-                            "port": port,
-                            "state": "filtered",
-                            "service": "unknown",
-                            "version": ""
-                        })
+                        metrics["closed_ports"].append(port_data)
+                    
+                except socket.timeout:
+                    # Timeout - port is likely filtered (firewall blocking)
+                    metrics["filtered_ports"].append({
+                        "port": port,
+                        "state": "filtered",
+                        "service": "unknown",
+                        "version": ""
+                    })
+                except Exception as port_error:
+                    logger.debug(f"Error scanning port {port}: {port_error}")
+                    # Treat as filtered on error
+                    metrics["filtered_ports"].append({
+                        "port": port,
+                        "state": "filtered",
+                        "service": "unknown",
+                        "version": ""
+                    })
+            
+            # Calculate risk level
+            open_count = len(metrics["open_ports"])
+            if open_count == 0:
+                metrics["risk_level"] = "Low"
+            elif open_count <= 3:
+                metrics["risk_level"] = "Medium"
+            else:
+                metrics["risk_level"] = "High"
+            
+            metrics["vulnerabilities"] = []  # Socket scan can't detect vulnerabilities
+            metrics["note"] = "Port scanning performed using socket-based method (no nmap required)"
+            
+            logger.info(f"Socket scan completed: {open_count} open ports found")
             
         except Exception as e:
-            logger.error(f"Network security scan error: {e}", exc_info=True)
-            metrics["error"] = str(e)
+            logger.error(f"Socket-based port scan error: {e}", exc_info=True)
+            metrics["error"] = f"Socket-based port scan failed: {str(e)}"
+            metrics["target_url"] = target_url
         
         return metrics
+    
+    def _guess_service(self, port: int) -> str:
+        """Guess service name based on common port numbers"""
+        common_ports = {
+            20: "ftp-data", 21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp",
+            53: "dns", 80: "http", 110: "pop3", 143: "imap", 443: "https",
+            445: "smb", 993: "imaps", 995: "pop3s", 3306: "mysql",
+            3389: "rdp", 5432: "postgresql", 8080: "http-proxy", 8443: "https-alt"
+        }
+        return common_ports.get(port, "unknown")
     
     async def run_endpoint_discovery(
         self, 

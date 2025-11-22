@@ -15,14 +15,17 @@ export default function BarChart({ data, title, xLabel = 'Category', yLabel = 'V
   const isNoDataPlaceholder = data.length === 1 && data[0]?.label === "No Data" && data[0]?.value === 0
   
   // Check if this is a connection test chart (binary success/failure)
-  // Check title and also check if data looks like connection test (HTTP/HTTPS labels with 0/1 values)
+  // Must have connection keywords in title AND binary values (0/1/true/false)
   const titleLower = title?.toLowerCase() || ''
   const hasConnectionKeywords = titleLower.includes('connection') || titleLower.includes('connectivity')
-  const hasHttpLabels = data.some(d => 
-    (d.label || '').toUpperCase().includes('HTTP') && 
-    (d.value === 0 || d.value === 1 || d.value === true || d.value === false || d.success !== undefined)
+  const hasBinaryValues = data.every(d => 
+    d.value === 0 || d.value === 1 || d.value === true || d.value === false || d.success !== undefined
   )
-  const isConnectionTest = hasConnectionKeywords || hasHttpLabels
+  const hasHttpLabels = data.some(d => 
+    (d.label || '').toUpperCase().includes('HTTP')
+  )
+  // Only treat as connection test if title has connection keywords AND values are binary
+  const isConnectionTest = hasConnectionKeywords && hasBinaryValues && hasHttpLabels
   
   // If it's a "No Data" placeholder and not a connection test, show empty state
   if (isNoDataPlaceholder && !isConnectionTest) {

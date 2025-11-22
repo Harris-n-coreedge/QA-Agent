@@ -287,7 +287,8 @@ function TestResultCard({ result }) {
                     const normalizedKey = key.toLowerCase().replace(/_/g, '').replace(/\s/g, '')
                     return normalizedSk === normalizedKey || 
                            (normalizedKey.includes('packet') && normalizedSk.includes('packet')) ||
-                           (normalizedKey.includes('traffic') && normalizedSk.includes('traffic'))
+                           (normalizedKey.includes('traffic') && normalizedSk.includes('traffic')) ||
+                           (normalizedKey.includes('averageresponsetime') && normalizedSk.includes('averageresponsetime'))
                   })
                   if (isDuplicateInSummary && key !== 'error') return null
                   
@@ -308,6 +309,9 @@ function TestResultCard({ result }) {
                   
                   // Skip 'note' field - it's informational and shown in summary text
                   if (key === 'note') return null
+                  
+                  // Skip 'target_url' - it's duplicate of 'target'
+                  if (key === 'target_url') return null
                   
                   if (Array.isArray(value)) return null // Skip arrays, they're handled separately
                   if (value == null || value === undefined) return null // Skip null/undefined values
@@ -341,6 +345,19 @@ function TestResultCard({ result }) {
                     displayValue = value ? 'Yes' : 'No'
                   } else if (typeof value === 'number') {
                     displayValue = value.toFixed(2)
+                  } else if (typeof value === 'string') {
+                    // Special handling for discovery_method
+                    if (key === 'discovery_method') {
+                      if (value === 'passive') {
+                        displayValue = 'Passive (non-intrusive scanning)'
+                      } else if (value === 'active') {
+                        displayValue = 'Active (intrusive scanning)'
+                      } else {
+                        displayValue = value
+                      }
+                    } else {
+                      displayValue = value
+                    }
                   }
                   
                   return (
