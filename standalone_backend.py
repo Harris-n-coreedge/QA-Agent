@@ -659,8 +659,8 @@ def _create_visualizations(test_type: str, metrics: Dict[str, Any]) -> Dict[str,
             # They're shown in summary text but not in the chart to avoid confusion
             transport_protocols = {'TCP', 'UDP', 'ICMP'}
             protocol_data = [
-                {"label": protocol, "value": count} 
-                for protocol, count in metrics["protocol_distribution"].items()
+                    {"label": protocol, "value": count} 
+                    for protocol, count in metrics["protocol_distribution"].items()
                 if protocol not in transport_protocols
             ]
             # If empty, add a placeholder to show "No data"
@@ -734,7 +734,7 @@ def _create_visualizations(test_type: str, metrics: Dict[str, Any]) -> Dict[str,
                         for service, count in service_counts.items()
                     ],
                     "title": "Open Ports by Service Type"
-                }
+            }
     
     elif test_type.startswith("endpoint_discovery") or (test_type.startswith("endpoint") and not test_type.startswith("endpoint_performance")):
         # Endpoint discovery visualizations

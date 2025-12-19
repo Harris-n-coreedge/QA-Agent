@@ -1106,13 +1106,13 @@ class NetworkTestRunner:
                     
                     # Try layer 2 sniffing first (requires winpcap/npcap on Windows)
                     try:
-                        packets = await asyncio.to_thread(
-                            sniff,
-                            timeout=duration,
-                            prn=packet_handler,
-                            store=True,
-                            filter=f"host {hostname}" if hostname else None
-                        )
+                packets = await asyncio.to_thread(
+                    sniff,
+                    timeout=duration,
+                    prn=packet_handler,
+                    store=True,
+                    filter=f"host {hostname}" if hostname else None
+                )
                     except (OSError, PermissionError) as perm_error:
                         # Catch permission errors early to show clear message
                         error_str = str(perm_error)
@@ -1529,18 +1529,18 @@ class NetworkTestRunner:
             logger.info(f"Scanning {len(ports)} ports on {hostname} using socket-based method")
             
             # Scan each port
-            for port in ports:
-                try:
+                for port in ports:
+                    try:
                     # Rate limiting between scans
-                    await self.safety_validator.add_rate_limit_delay(target_url)
+                        await self.safety_validator.add_rate_limit_delay(target_url)
                     
                     # Create socket and attempt connection
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(2.0)  # 2 second timeout
                     
                     result = sock.connect_ex((target_ip, port))
-                    sock.close()
-                    
+                        sock.close()
+                        
                     # Determine port state based on result
                     if result == 0:
                         # Connection successful - port is open
@@ -1550,13 +1550,13 @@ class NetworkTestRunner:
                             "service": self._guess_service(port),
                             "version": ""
                         }
-                        metrics["open_ports"].append(port_data)
+                            metrics["open_ports"].append(port_data)
                         metrics["services"][str(port)] = {
                             "name": port_data["service"],
                             "version": "",
                             "state": "open"
                         }
-                    else:
+                        else:
                         # Connection failed - port is likely closed or filtered
                         # We can't distinguish between closed and filtered with basic socket scan
                         port_data = {
@@ -1565,7 +1565,7 @@ class NetworkTestRunner:
                             "service": "unknown",
                             "version": ""
                         }
-                        metrics["closed_ports"].append(port_data)
+                            metrics["closed_ports"].append(port_data)
                     
                 except socket.timeout:
                     # Timeout - port is likely filtered (firewall blocking)
@@ -1578,12 +1578,12 @@ class NetworkTestRunner:
                 except Exception as port_error:
                     logger.debug(f"Error scanning port {port}: {port_error}")
                     # Treat as filtered on error
-                    metrics["filtered_ports"].append({
-                        "port": port,
-                        "state": "filtered",
-                        "service": "unknown",
-                        "version": ""
-                    })
+                        metrics["filtered_ports"].append({
+                            "port": port,
+                            "state": "filtered",
+                            "service": "unknown",
+                            "version": ""
+                        })
             
             # Calculate risk level
             open_count = len(metrics["open_ports"])
